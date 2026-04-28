@@ -17,13 +17,21 @@ const QUICK_PROMPTS = [
 
 const PAGE_TYPES = ['Full page', 'Component', 'Dashboard', 'Form', 'Landing page', 'Modal', 'Data table', 'Card list']
 const STYLES = ['Modern clean Tailwind CSS', 'Minimal with lots of whitespace', 'shadcn/ui components', 'Dark theme', 'Material design', 'Colorful and bold']
-const MODELS = [
-  { id: 'google/gemini-2.0-flash-exp:free', label: '🟢 Gemini 2.0 Flash (Free)' },
-  { id: 'meta-llama/llama-3.3-70b-instruct:free', label: '🟢 Llama 3.3 70B (Free)' },
-  { id: 'deepseek/deepseek-chat-v3-0324:free', label: '🟢 DeepSeek V3 (Free)' },
-  { id: 'mistralai/mistral-7b-instruct:free', label: '🟢 Mistral 7B (Free)' },
-  { id: 'google/gemini-2.5-pro-preview', label: '⭐ Gemini 2.5 Pro (Paid)' },
-  { id: 'anthropic/claude-sonnet-4-5', label: '⭐ Claude Sonnet (Paid)' },
+
+const FREE_MODELS = [
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'deepseek/deepseek-chat-v3-0324:free',
+  'google/gemini-2.5-pro-exp-03-25:free',
+  'meta-llama/llama-4-maverick:free',
+  'mistralai/mistral-7b-instruct:free',
+  'qwen/qwen3-8b:free',
+  'microsoft/phi-4-reasoning-plus:free',
+]
+
+const ALL_MODELS = [
+  ...FREE_MODELS.map(id => ({ id, label: '🟢 ' + id.split('/')[1].split(':')[0].replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) + ' (Free)', free: true })),
+  { id: 'google/gemini-2.5-pro-preview', label: '⭐ Gemini 2.5 Pro (Paid)', free: false },
+  { id: 'anthropic/claude-sonnet-4-5', label: '⭐ Claude Sonnet (Paid)', free: false },
 ]
 
 function CopyButton({ text }) {
@@ -32,16 +40,49 @@ function CopyButton({ text }) {
   return <button onClick={copy} style={styles.copyBtn}>{copied ? '✓ Copied!' : 'Copy'}</button>
 }
 
+async function tryModel(apiKey, modelId, systemPrompt, userPrompt) {
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      'HTTP-Referer': window.location.href,
+      'X-Title': 'React Frontend Agent',
+    },
+    body: JSON.stringify({
+      model: modelId,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 8000,
+      temperature: 0.7,
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err?.error?.message || `HTTP ${res.status}`)
+  }
+  const data = await res.json()
+  const raw = data?.choices?.[0]?.message?.content || ''
+  if (!raw) throw new Error('Empty response')
+  const cleaned = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim()
+  if (!cleaned) throw new Error('Empty response after cleanup')
+  return cleaned
+}
+
 export default function App() {
   const [apiKey, setApiKey] = useState(localStorage.getItem('openrouter_key') || '')
   const [keySet, setKeySet] = useState(!!localStorage.getItem('openrouter_key'))
   const [prompt, setPrompt] = useState('')
   const [pageType, setPageType] = useState('Full page')
   const [style, setStyle] = useState('Modern clean Tailwind CSS')
-  const [model, setModel] = useState('google/gemini-2.0-flash-exp:free')
+  const [selectedModel, setSelectedModel] = useState('auto')
   const [filename, setFilename] = useState('MyPage.jsx')
   const [loading, setLoading] = useState(false)
+  const [loadingMsg, setLoadingMsg] = useState('')
   const [code, setCode] = useState('')
+  const [usedModel, setUsedModel] = useState('')
   const [error, setError] = useState('')
   const [history, setHistory] = useState([])
   const [tab, setTab] = useState('generate')
@@ -63,9 +104,11 @@ export default function App() {
   const generate = async () => {
     if (!prompt.trim()) { promptRef.current?.focus(); return }
     if (!apiKey) { setError('Please enter your OpenRouter API key first.'); return }
+
     setLoading(true)
     setError('')
     setCode('')
+    setUsedModel('')
 
     const systemPrompt = `You are an expert React developer. Generate complete production-ready .jsx files.
 Style: ${style}
@@ -77,42 +120,35 @@ Rules:
 - Default export the main component
 - ONLY output raw JSX code. No markdown fences, no explanation. Start with import statements.`
 
-    try {
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': window.location.href,
-          'X-Title': 'React Frontend Agent',
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: `Create a ${pageType} React JSX file: ${prompt}` },
-          ],
-          max_tokens: 8000,
-          temperature: 0.7,
-        }),
-      })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err?.error?.message || `HTTP ${res.status}`)
+    const userPrompt = `Create a ${pageType} React JSX file: ${prompt}`
+
+    const modelsToTry = selectedModel === 'auto' ? FREE_MODELS : [selectedModel]
+    let lastError = ''
+
+    for (let i = 0; i < modelsToTry.length; i++) {
+      const modelId = modelsToTry[i]
+      const shortName = modelId.split('/')[1].split(':')[0]
+      setLoadingMsg(`Trying ${shortName} (${i + 1}/${modelsToTry.length})...`)
+
+      try {
+        const result = await tryModel(apiKey, modelId, systemPrompt, userPrompt)
+        setCode(result)
+        setUsedModel(modelId)
+        setHistory(h => [{ prompt, filename, code: result, model: modelId, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, ...h].slice(0, 20))
+        setLoading(false)
+        return
+      } catch (e) {
+        lastError = e.message
+        console.warn(`Model ${modelId} failed:`, e.message)
+        // continue to next model
       }
-      const data = await res.json()
-      const raw = data?.choices?.[0]?.message?.content || ''
-      const cleaned = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim()
-      if (!cleaned) throw new Error('Empty response — try a different model')
-      setCode(cleaned)
-      setHistory(h => [{ prompt, filename, code: cleaned, model, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, ...h].slice(0, 20))
-    } catch (e) {
-      setError(e.message)
     }
+
+    setError(selectedModel === 'auto'
+      ? `All free models failed. Last error: ${lastError}. Try adding $1 credit at openrouter.ai/credits`
+      : `Model failed: ${lastError}`)
     setLoading(false)
   }
-
-  const selectedModel = MODELS.find(m => m.id === model)
 
   return (
     <div style={styles.root}>
@@ -122,7 +158,7 @@ Rules:
             <div style={styles.logoIcon}>⚛</div>
             <div>
               <div style={styles.logoTitle}>React Frontend Agent</div>
-              <div style={styles.logoSub}>Powered by OpenRouter · Free models available</div>
+              <div style={styles.logoSub}>Powered by OpenRouter · Auto-retry all free models</div>
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -137,20 +173,20 @@ Rules:
           <div style={styles.keyBox}>
             <div style={styles.keyTitle}>🔑 Enter your OpenRouter API Key</div>
             <div style={styles.keySub}>
-              OpenRouter is <strong style={{ color: '#4ade80' }}>free</strong> — no credit card needed for free models. Get your key at{' '}
+              Free to sign up — no credit card needed. Get your key at{' '}
               <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" style={styles.link}>openrouter.ai/keys</a>.
               Stored only in your browser.
             </div>
             <div style={styles.steps}>
               <div style={styles.step}><span style={styles.stepNum}>1</span> Go to <a href="https://openrouter.ai" target="_blank" rel="noreferrer" style={styles.link}>openrouter.ai</a> → Sign up free</div>
-              <div style={styles.step}><span style={styles.stepNum}>2</span> Click your profile → <strong>Keys</strong> → <strong>Create Key</strong></div>
+              <div style={styles.step}><span style={styles.stepNum}>2</span> Profile → <strong>Keys</strong> → <strong>Create Key</strong></div>
               <div style={styles.step}><span style={styles.stepNum}>3</span> Paste below and click Save</div>
             </div>
             <div style={styles.keyRow}>
               <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveKey()} placeholder="sk-or-v1-..." style={styles.keyInput} />
               <button onClick={saveKey} disabled={!apiKey.trim()} style={styles.saveKeyBtn}>Save Key</button>
             </div>
-            <div style={styles.freeNote}>✅ Free models: Gemini 2.0 Flash, Llama 3.3 70B, DeepSeek V3, Mistral 7B — no billing required</div>
+            <div style={styles.freeNote}>✅ Auto-retries {FREE_MODELS.length} free models until one works — no billing needed</div>
           </div>
         )}
 
@@ -163,11 +199,22 @@ Rules:
 
         {tab === 'generate' && (
           <div style={styles.generatePane}>
+
+            {/* Model selector */}
             <div>
-              <div style={styles.label}>AI Model</div>
+              <div style={styles.label}>Model Strategy</div>
               <div style={styles.modelGrid}>
-                {MODELS.map(m => (
-                  <button key={m.id} onClick={() => setModel(m.id)} style={{ ...styles.modelBtn, ...(model === m.id ? styles.modelBtnActive : {}) }}>
+                <button
+                  onClick={() => setSelectedModel('auto')}
+                  style={{ ...styles.modelBtn, ...(selectedModel === 'auto' ? styles.modelBtnActive : {}), gridColumn: 'span 2' }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 2 }}>🔄 Auto (Recommended)</div>
+                    <div style={{ fontSize: 11, opacity: 0.7 }}>Tries all {FREE_MODELS.length} free models automatically until one succeeds</div>
+                  </div>
+                </button>
+                {ALL_MODELS.map(m => (
+                  <button key={m.id} onClick={() => setSelectedModel(m.id)} style={{ ...styles.modelBtn, ...(selectedModel === m.id ? styles.modelBtnActive : {}) }}>
                     {m.label}
                   </button>
                 ))}
@@ -207,14 +254,17 @@ Rules:
             </div>
 
             <button onClick={generate} disabled={loading || !keySet} style={styles.genBtn}>
-              {loading ? <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}><span style={styles.spinner} /> Generating...</span> : 'Generate JSX ↗'}
+              {loading
+                ? <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}><span style={styles.spinner} />{loadingMsg}</span>
+                : selectedModel === 'auto' ? `Generate JSX ↗  (auto-retry ${FREE_MODELS.length} models)` : 'Generate JSX ↗'
+              }
             </button>
 
             {error && (
               <div style={styles.errorBox}>
                 <strong>⚠ Error:</strong> {error}
                 <div style={{ marginTop: 8, fontSize: 12, color: '#ffaa80' }}>
-                  💡 Try a different free model, or check your key at <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" style={styles.link}>openrouter.ai/keys</a>
+                  💡 Add $1 credit at <a href="https://openrouter.ai/credits" target="_blank" rel="noreferrer" style={styles.link}>openrouter.ai/credits</a> for guaranteed access
                 </div>
               </div>
             )}
@@ -226,7 +276,7 @@ Rules:
                   <span style={{ ...styles.dot, animationDelay: '0.2s' }} />
                   <span style={{ ...styles.dot, animationDelay: '0.4s' }} />
                 </div>
-                Writing your JSX with {selectedModel?.label?.replace(/[🟢⭐] /, '')}...
+                {loadingMsg}
               </div>
             )}
 
@@ -235,7 +285,7 @@ Rules:
                 <div style={styles.outputHeader}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={styles.fname}>{filename}</span>
-                    <span style={styles.modelTag}>{model.split('/')[1]?.split(':')[0]}</span>
+                    <span style={styles.modelTag}>✓ {usedModel.split('/')[1]?.split(':')[0]}</span>
                   </div>
                   <CopyButton text={code} />
                 </div>
@@ -250,7 +300,7 @@ Rules:
             {history.length === 0 ? (
               <div style={styles.empty}>No generations yet — go generate something!</div>
             ) : history.map((h, i) => (
-              <div key={i} style={styles.histItem} onClick={() => { setPrompt(h.prompt); setFilename(h.filename); setCode(h.code); setModel(h.model); setTab('generate') }}>
+              <div key={i} style={styles.histItem} onClick={() => { setPrompt(h.prompt); setFilename(h.filename); setCode(h.code); setUsedModel(h.model); setTab('generate') }}>
                 <div style={{ flex: 1, overflow: 'hidden' }}>
                   <div style={styles.histFile}>{h.filename}</div>
                   <div style={styles.histPrompt}>{h.prompt.slice(0, 90)}{h.prompt.length > 90 ? '...' : ''}</div>
@@ -300,8 +350,8 @@ const styles = {
   tabActive: { color: '#818cf8', borderBottomColor: '#818cf8' },
   badge: { background: '#2a2a3a', color: '#888', fontSize: 10, padding: '1px 6px', borderRadius: 10, fontWeight: 600 },
   generatePane: { display: 'flex', flexDirection: 'column', gap: 18 },
-  modelGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8, marginTop: 6 },
-  modelBtn: { padding: '8px 12px', borderRadius: 8, border: '1px solid #2a2a3a', background: '#16161e', color: '#888', cursor: 'pointer', fontFamily: 'Inter, sans-serif', fontSize: 12, textAlign: 'left' },
+  modelGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 6 },
+  modelBtn: { padding: '10px 12px', borderRadius: 8, border: '1px solid #2a2a3a', background: '#16161e', color: '#888', cursor: 'pointer', fontFamily: 'Inter, sans-serif', fontSize: 12, textAlign: 'left' },
   modelBtnActive: { border: '1px solid #7c3aed', background: '#1a1030', color: '#c4b5fd' },
   row: { display: 'flex', gap: 12, flexWrap: 'wrap' },
   inputGroup: { display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 140 },
@@ -312,7 +362,7 @@ const styles = {
   chip: { fontSize: 11, padding: '4px 12px', borderRadius: 20, border: '1px solid #2a2a3a', color: '#aaa', cursor: 'pointer', background: '#16161e', fontFamily: 'Inter, sans-serif' },
   textarea: { padding: '10px 14px', borderRadius: 8, border: '1px solid #2a2a3a', background: '#16161e', color: '#e8e8f0', fontFamily: 'Inter, sans-serif', fontSize: 13, resize: 'vertical', outline: 'none', lineHeight: 1.6, width: '100%' },
   hint: { fontSize: 10, color: '#444', marginTop: 2 },
-  genBtn: { background: 'linear-gradient(135deg, #7c3aed, #2563eb)', color: '#fff', border: 'none', borderRadius: 8, padding: '12px 24px', fontFamily: 'Inter, sans-serif', fontSize: 14, fontWeight: 600, cursor: 'pointer', width: '100%' },
+  genBtn: { background: 'linear-gradient(135deg, #7c3aed, #2563eb)', color: '#fff', border: 'none', borderRadius: 8, padding: '13px 24px', fontFamily: 'Inter, sans-serif', fontSize: 14, fontWeight: 600, cursor: 'pointer', width: '100%' },
   spinner: { width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' },
   errorBox: { background: '#2d1a1a', border: '1px solid #5c2a2a', color: '#ff8080', padding: '14px 16px', borderRadius: 8, fontSize: 13, lineHeight: 1.6 },
   loadingBox: { display: 'flex', alignItems: 'center', gap: 12, color: '#555', fontSize: 13 },
