@@ -19,13 +19,13 @@ const PAGE_TYPES = ['Full page', 'Component', 'Dashboard', 'Form', 'Landing page
 const STYLES = ['Modern clean Tailwind CSS', 'Minimal with lots of whitespace', 'shadcn/ui components', 'Dark theme', 'Material design', 'Colorful and bold']
 
 const FREE_MODELS = [
+  'openrouter/free',
   'meta-llama/llama-3.3-70b-instruct:free',
-  'deepseek/deepseek-chat-v3-0324:free',
-  'google/gemini-2.5-pro-exp-03-25:free',
-  'meta-llama/llama-4-maverick:free',
-  'mistralai/mistral-7b-instruct:free',
-  'qwen/qwen3-8b:free',
-  'microsoft/phi-4-reasoning-plus:free',
+  'deepseek/deepseek-r1:free',
+  'qwen/qwen3-235b-a22b:free',
+  'google/gemma-3-27b-it:free',
+  'mistralai/devstral-small:free',
+  'nvidia/llama-3.1-nemotron-70b-instruct:free',
 ]
 
 const ALL_MODELS = [
@@ -210,7 +210,7 @@ Rules:
                 >
                   <div>
                     <div style={{ fontWeight: 600, marginBottom: 2 }}>🔄 Auto (Recommended)</div>
-                    <div style={{ fontSize: 11, opacity: 0.7 }}>Tries all {FREE_MODELS.length} free models automatically until one succeeds</div>
+                    <div style={{ fontSize: 11, opacity: 0.7 }}>Uses openrouter/free router — auto-picks best available free model instantly</div>
                   </div>
                 </button>
                 {ALL_MODELS.map(m => (
