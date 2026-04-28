@@ -41,13 +41,13 @@ const CHAT_STARTERS = [
   '📊 What is the best way to optimize a slow SQL query?',
   '🔐 How does JWT authentication work?',
   '⚡ What are React hooks and when to use them?',
-  '🏗 Explain microservices vs monolithic architecture',
+  '🏗 Explain microservices vs monolitc arctecture',
   '🔄 What is CI/CD and how to set it up?',
-  '📦 How do I implement caching in .NET?',
+  '📦 How do I implement cacng in .NET?',
 ]
 
 const PAGE_TYPES = ['Full page', 'Component', 'Dashboard', 'Form', 'Landing page', 'Modal', 'Data table', 'Card list']
-const STYLES = ['Modern clean Tailwind CSS', 'Minimal with lots of whitespace', 'shadcn/ui components', 'Dark theme', 'Material design', 'Colorful and bold']
+const STYLES = ['Modern clean Tailwind CSS', 'Minimal with lots of wtespace', 'shadcn/ui components', 'Dark theme', 'Material design', 'Colorful and bold']
 
 const SQL_DIALECTS = [
   { id: 'oracle', label: '🔶 Oracle SQL', desc: 'Oracle DB · ROWNUM · NVL · DECODE · SYSDATE · DUAL' },
@@ -58,7 +58,7 @@ const SQL_DIALECTS = [
 
 const CSHARP_TYPES = [
   { id: 'aspnet', label: '🌐 ASP.NET Core', desc: 'Web API · Controllers · Middleware · Filters · Routing' },
-  { id: 'ef', label: '🗃 Entity Framework', desc: 'DbContext · Migrations · LINQ · Relationships · Fluent API' },
+  { id: 'ef', label: '🗃 Entity Framework', desc: 'DbContext · Migrations · LINQ · Relationsps · Fluent API' },
   { id: 'console', label: '⌨ Console / CLI', desc: 'Console app · CLI tool · Background worker · Hosted service' },
   { id: 'library', label: '📦 Class Library', desc: 'Services · Interfaces · Patterns · Extensions · Utilities' },
   { id: 'blazor', label: '⚡ Blazor', desc: 'Blazor components · Pages · State · JS interop · Forms' },
@@ -93,7 +93,7 @@ function CodeBlock({ code, lang }) {
   const [copied, setCopied] = useState(false)
   const copy = () => { navigator.clipboard.writeText(code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }) }
   return (
-    <div style={{ background: '#0d0d10', border: '1px solid #2a2a3a', borderRadius: 8, overflow: 'hidden', margin: '8px 0' }}>
+    <div style={{ background: '#0d0d10', border: '1px solid #2a2a3a', borderRadius: 8, overflow: 'dden', margin: '8px 0' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 12px', background: '#16161e', borderBottom: '1px solid #2a2a3a' }}>
         <span style={{ fontSize: 11, color: '#555', fontFamily: 'JetBrains Mono, monospace' }}>{lang}</span>
         <button onClick={copy} style={{ fontSize: 11, background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>{copied ? '✓' : 'Copy'}</button>
@@ -170,7 +170,7 @@ export default function App() {
   const [tab, setTab] = useState('chat')
 
   // Chat state
-  const [messages, setMessages] = useState([{ role: 'assistant', content: "Hi! Agent Ready'' }])
+  const [messages, setMessages] = useState([{ role: 'assistant', content: "Hi! Agent Ready"}])
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   const [chatLoadingMsg, setChatLoadingMsg] = useState('')
