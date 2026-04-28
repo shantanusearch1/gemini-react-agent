@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 const JSX_PROMPTS = [
   { label: 'Login page', prompt: 'Login page with email and password fields, remember me checkbox, forgot password link, and sign in button' },
@@ -10,37 +10,40 @@ const JSX_PROMPTS = [
   { label: 'File upload', prompt: 'File upload component with drag-and-drop zone, file type icons, file list with size, and remove button' },
   { label: 'Kanban board', prompt: 'Kanban board with Todo, In Progress, Review, and Done columns with task cards showing priority badges' },
   { label: 'Chat UI', prompt: 'Chat interface with message list, sender avatars, timestamps, and message input with send button' },
-  { label: 'Register form', prompt: 'Registration form with first name, last name, email, password, confirm password, role dropdown, and terms checkbox' },
   { label: 'Invoice page', prompt: 'Invoice page with company logo, client details, itemized table with qty/rate/total, subtotal, tax, grand total, and print button' },
-  { label: 'Landing page', prompt: 'SaaS landing page with hero section, features grid, testimonials, and call-to-action footer' },
 ]
 
 const SQL_PROMPTS = [
   { label: 'SELECT with JOIN', prompt: 'Get all orders with customer name, product name, quantity and total price by joining orders, customers and products tables' },
   { label: 'Aggregation', prompt: 'Monthly revenue report grouped by month and region with total sales, order count and average order value' },
   { label: 'CREATE TABLE', prompt: 'Create tables for an e-commerce system: customers, products, orders, order_items with proper constraints and indexes' },
-  { label: 'Subquery', prompt: 'Find all customers who have placed more than 5 orders and spent more than 10000 total in the last 6 months' },
   { label: 'Window function', prompt: 'Calculate running total of sales, rank employees by sales within each department, and show previous month comparison' },
   { label: 'Stored Procedure', prompt: 'Create a stored procedure to process a new order: validate stock, insert order, update inventory, return order ID' },
-  { label: 'Pagination', prompt: 'Paginated query for product listing with search filter, category filter, sort by price or name, with total count' },
-  { label: 'Upsert', prompt: 'Upsert customer records — insert if not exists, update if email already exists, log changes to audit table' },
-  { label: 'Date operations', prompt: 'Sales report for last 30 days, group by week, compare with same period last year, show percentage change' },
   { label: 'CTE', prompt: 'Use CTEs to find top 10 customers by lifetime value with their most recent order and product preferences' },
+  { label: 'Date operations', prompt: 'Sales report for last 30 days, group by week, compare with same period last year, show percentage change' },
+  { label: 'Upsert', prompt: 'Upsert customer records — insert if not exists, update if email already exists, log changes to audit table' },
 ]
 
 const CSHARP_PROMPTS = [
   { label: 'REST API Controller', prompt: 'ASP.NET Core Web API controller for products with GET, POST, PUT, DELETE endpoints, DTOs, and proper HTTP status codes' },
   { label: 'Repository pattern', prompt: 'Generic repository pattern with interface, implementation using Entity Framework Core, Unit of Work pattern' },
-  { label: 'LINQ queries', prompt: 'Complex LINQ queries for sales data: filtering, grouping, joining, aggregating, ordering with method and query syntax' },
   { label: 'Async service', prompt: 'Async service class for sending emails with retry logic, cancellation token, dependency injection, and logging' },
   { label: 'Entity Framework', prompt: 'Entity Framework Core DbContext with models for e-commerce: Customer, Product, Order, fluent configuration and migrations' },
   { label: 'Middleware', prompt: 'Custom ASP.NET Core middleware for request logging, error handling, correlation ID, and response time tracking' },
-  { label: 'Background service', prompt: 'IHostedService background worker that processes a queue, sends notifications, with cancellation and error handling' },
   { label: 'Auth with JWT', prompt: 'JWT authentication service: generate token, validate, refresh token, claims, roles, ASP.NET Core integration' },
-  { label: 'Design pattern', prompt: 'Factory, Strategy and Observer design patterns implemented in C# with real-world e-commerce use case examples' },
   { label: 'Unit tests', prompt: 'xUnit unit tests for a order processing service with Moq mocks, arrange-act-assert pattern, edge cases' },
-  { label: 'SignalR Hub', prompt: 'SignalR hub for real-time notifications: connection management, groups, send to specific users, reconnect logic' },
-  { label: 'gRPC service', prompt: 'gRPC service definition and C# implementation for a product catalog with streaming and error handling' },
+  { label: 'Background service', prompt: 'IHostedService background worker that processes a queue, sends notifications, with cancellation and error handling' },
+]
+
+const CHAT_STARTERS = [
+  '💡 Explain the difference between REST and GraphQL',
+  '🐛 How do I fix CORS errors in ASP.NET Core?',
+  '📊 What is the best way to optimize a slow SQL query?',
+  '🔐 How does JWT authentication work?',
+  '⚡ What are React hooks and when to use them?',
+  '🏗 Explain microservices vs monolithic architecture',
+  '🔄 What is CI/CD and how to set it up?',
+  '📦 How do I implement caching in .NET?',
 ]
 
 const PAGE_TYPES = ['Full page', 'Component', 'Dashboard', 'Form', 'Landing page', 'Modal', 'Data table', 'Card list']
@@ -77,9 +80,7 @@ function modelDisplayName(modelId) {
   if (modelId === 'openrouter/free') return 'openrouter/free'
   const parts = modelId.split('/')
   if (parts.length < 2) return modelId
-  const provider = parts[0]
-  const name = parts[1].split(':')[0]
-  return `${provider}/${name}`
+  return `${parts[0]}/${parts[1].split(':')[0]}`
 }
 
 function CopyButton({ text }) {
@@ -88,7 +89,46 @@ function CopyButton({ text }) {
   return <button onClick={copy} style={styles.copyBtn}>{copied ? '✓ Copied!' : 'Copy'}</button>
 }
 
-async function tryModel(apiKey, modelId, systemPrompt, userPrompt) {
+function CodeBlock({ code, lang }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => { navigator.clipboard.writeText(code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }) }
+  return (
+    <div style={{ background: '#0d0d10', border: '1px solid #2a2a3a', borderRadius: 8, overflow: 'hidden', margin: '8px 0' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 12px', background: '#16161e', borderBottom: '1px solid #2a2a3a' }}>
+        <span style={{ fontSize: 11, color: '#555', fontFamily: 'JetBrains Mono, monospace' }}>{lang}</span>
+        <button onClick={copy} style={{ fontSize: 11, background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>{copied ? '✓' : 'Copy'}</button>
+      </div>
+      <pre style={{ margin: 0, padding: '12px', fontSize: 12, lineHeight: 1.6, color: '#c8d3f5', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'JetBrains Mono, monospace' }}>{code}</pre>
+    </div>
+  )
+}
+
+function renderMessage(text) {
+  const parts = text.split(/(```[\s\S]*?```)/g)
+  return parts.map((part, i) => {
+    if (part.startsWith('```')) {
+      const lines = part.slice(3, -3).split('\n')
+      const lang = lines[0].trim() || 'code'
+      const code = lines.slice(1).join('\n')
+      return <CodeBlock key={i} code={code} lang={lang} />
+    }
+    // render bold **text** and inline `code`
+    const segments = part.split(/(`[^`]+`|\*\*[^*]+\*\*)/g)
+    return (
+      <span key={i}>
+        {segments.map((seg, j) => {
+          if (seg.startsWith('**') && seg.endsWith('**')) return <strong key={j} style={{ color: '#e8e8f0' }}>{seg.slice(2, -2)}</strong>
+          if (seg.startsWith('`') && seg.endsWith('`')) return <code key={j} style={{ background: '#1a1a2a', color: '#a78bfa', padding: '1px 5px', borderRadius: 4, fontSize: '0.9em', fontFamily: 'JetBrains Mono, monospace' }}>{seg.slice(1, -1)}</code>
+          return seg.split('\n').map((line, k, arr) => (
+            <span key={k}>{line}{k < arr.length - 1 ? <br /> : null}</span>
+          ))
+        })}
+      </span>
+    )
+  })
+}
+
+async function tryModel(apiKey, modelId, messages) {
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -97,15 +137,7 @@ async function tryModel(apiKey, modelId, systemPrompt, userPrompt) {
       'HTTP-Referer': window.location.href,
       'X-Title': 'Dev Agent',
     },
-    body: JSON.stringify({
-      model: modelId,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      max_tokens: 8000,
-      temperature: 0.3,
-    }),
+    body: JSON.stringify({ model: modelId, messages, max_tokens: 8000, temperature: 0.3 }),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
@@ -114,37 +146,41 @@ async function tryModel(apiKey, modelId, systemPrompt, userPrompt) {
   const data = await res.json()
   const raw = data?.choices?.[0]?.message?.content || ''
   if (!raw) throw new Error('Empty response')
-  // get actual model used (openrouter/free resolves to a real model)
-  const actualModel = data?.model || modelId
-  return { raw: raw.trim(), actualModel }
+  return { raw: raw.trim(), actualModel: data?.model || modelId }
 }
 
-async function runWithRetry(apiKey, systemPrompt, userPrompt, setLoadingMsg) {
+async function runWithRetry(apiKey, messages, setLoadingMsg) {
   let lastError = ''
   for (let i = 0; i < FREE_MODELS.length; i++) {
     const modelId = FREE_MODELS[i]
     const shortName = modelId === 'openrouter/free' ? 'Auto Router' : modelId.split('/')[1].split(':')[0]
     setLoadingMsg(`Trying ${shortName} (${i + 1}/${FREE_MODELS.length})...`)
     try {
-      const { raw, actualModel } = await tryModel(apiKey, modelId, systemPrompt, userPrompt)
-      return { raw, modelId: actualModel }
+      return await tryModel(apiKey, modelId, messages)
     } catch (e) {
       lastError = e.message
-      console.warn(`Model ${modelId} failed:`, e.message)
     }
   }
-  throw new Error(`All models failed. Last error: ${lastError}`)
+  throw new Error(`All models failed. Last: ${lastError}`)
 }
 
 export default function App() {
   const [apiKey, setApiKey] = useState(localStorage.getItem('openrouter_key') || '')
   const [keySet, setKeySet] = useState(!!localStorage.getItem('openrouter_key'))
-  const [tab, setTab] = useState('jsx')
+  const [tab, setTab] = useState('chat')
 
-  // JSX
+  // Chat state
+  const [messages, setMessages] = useState([{ role: 'assistant', content: "Hi! I'm your Dev Agent. Ask me anything — code questions, debugging help, architecture advice, explanations, or anything else. I also generate React JSX, SQL (Oracle/BigQuery), and C# code in the other tabs!", model: '' }])
+  const [chatInput, setChatInput] = useState('')
+  const [chatLoading, setChatLoading] = useState(false)
+  const [chatLoadingMsg, setChatLoadingMsg] = useState('')
+  const chatEndRef = useRef()
+  const chatInputRef = useRef()
+
+  // JSX state
   const [jsxPrompt, setJsxPrompt] = useState('')
   const [pageType, setPageType] = useState('Full page')
-  const [style, setStyle] = useState('Modern clean Tailwind CSS')
+  const [jsxStyle, setJsxStyle] = useState('Modern clean Tailwind CSS')
   const [filename, setFilename] = useState('MyPage.jsx')
   const [jsxCode, setJsxCode] = useState('')
   const [jsxModel, setJsxModel] = useState('')
@@ -153,7 +189,7 @@ export default function App() {
   const [jsxError, setJsxError] = useState('')
   const jsxRef = useRef()
 
-  // SQL
+  // SQL state
   const [sqlPrompt, setSqlPrompt] = useState('')
   const [dialect, setDialect] = useState('oracle')
   const [sqlCode, setSqlCode] = useState('')
@@ -163,7 +199,7 @@ export default function App() {
   const [sqlError, setSqlError] = useState('')
   const sqlRef = useRef()
 
-  // C#
+  // C# state
   const [csPrompt, setCsPrompt] = useState('')
   const [csType, setCsType] = useState('aspnet')
   const [csFilename, setCsFilename] = useState('MyService.cs')
@@ -174,36 +210,52 @@ export default function App() {
   const [csError, setCsError] = useState('')
   const csRef = useRef()
 
-  // History
   const [history, setHistory] = useState([])
 
-  const saveKey = () => {
-    if (!apiKey.trim()) return
-    localStorage.setItem('openrouter_key', apiKey.trim())
-    setKeySet(true)
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, chatLoading])
+
+  const saveKey = () => { if (!apiKey.trim()) return; localStorage.setItem('openrouter_key', apiKey.trim()); setKeySet(true) }
+  const clearKey = () => { localStorage.removeItem('openrouter_key'); setApiKey(''); setKeySet(false) }
+
+  const sendChat = async (overrideInput) => {
+    const text = (overrideInput || chatInput).trim()
+    if (!text || !apiKey) return
+    setChatInput('')
+    const userMsg = { role: 'user', content: text }
+    const newMessages = [...messages, userMsg]
+    setMessages(newMessages)
+    setChatLoading(true)
+
+    const apiMessages = [
+      { role: 'system', content: 'You are an expert software developer and architect. Help with coding questions, debugging, architecture, best practices, and explanations. Use markdown formatting: **bold**, `inline code`, and ```language code blocks``` for code. Be concise but thorough.' },
+      ...newMessages.filter(m => m.role !== 'assistant' || m.content !== messages[0].content).map(m => ({ role: m.role, content: m.content }))
+    ]
+
+    try {
+      const { raw, actualModel } = await runWithRetry(apiKey, apiMessages, setChatLoadingMsg)
+      setMessages(prev => [...prev, { role: 'assistant', content: raw, model: actualModel }])
+    } catch (e) {
+      setMessages(prev => [...prev, { role: 'assistant', content: `⚠ Error: ${e.message}`, model: '' }])
+    }
+    setChatLoading(false)
+    setChatLoadingMsg('')
   }
-  const clearKey = () => {
-    localStorage.removeItem('openrouter_key')
-    setApiKey('')
-    setKeySet(false)
-  }
+
+  const clearChat = () => setMessages([{ role: 'assistant', content: "Hi! I'm your Dev Agent. Ask me anything — code questions, debugging, architecture advice, or anything else!", model: '' }])
 
   const generateJsx = async () => {
     if (!jsxPrompt.trim()) { jsxRef.current?.focus(); return }
     if (!apiKey) { setJsxError('Enter your OpenRouter API key first.'); return }
     setJsxLoading(true); setJsxError(''); setJsxCode(''); setJsxModel('')
     const sys = `You are an expert React developer. Generate complete production-ready .jsx files.
-Style: ${style}, Page type: ${pageType}
-- Functional components with React hooks
-- Realistic placeholder/mock data
-- Accessibility attributes (aria-label, role, tabIndex)
-- Default export
+Style: ${jsxStyle}, Page type: ${pageType}
+- Functional components with React hooks, realistic placeholder data, accessibility attributes, default export
 - ONLY output raw JSX. No markdown fences, no explanation. Start with import statements.`
     try {
-      const { raw, modelId } = await runWithRetry(apiKey, sys, `Create a ${pageType} React JSX: ${jsxPrompt}`, setJsxMsg)
+      const { raw, actualModel } = await runWithRetry(apiKey, [{ role: 'system', content: sys }, { role: 'user', content: `Create a ${pageType} React JSX: ${jsxPrompt}` }], setJsxMsg)
       const cleaned = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim()
-      setJsxCode(cleaned); setJsxModel(modelId)
-      setHistory(h => [{ type: 'jsx', prompt: jsxPrompt, output: cleaned, model: modelId, label: filename, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, ...h].slice(0, 30))
+      setJsxCode(cleaned); setJsxModel(actualModel)
+      setHistory(h => [{ type: 'jsx', prompt: jsxPrompt, output: cleaned, model: actualModel, label: filename, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, ...h].slice(0, 30))
     } catch (e) { setJsxError(e.message) }
     setJsxLoading(false)
   }
@@ -213,19 +265,17 @@ Style: ${style}, Page type: ${pageType}
     if (!apiKey) { setSqlError('Enter your OpenRouter API key first.'); return }
     setSqlLoading(true); setSqlError(''); setSqlCode(''); setSqlModel('')
     const d = SQL_DIALECTS.find(x => x.id === dialect)
-    const sys = `You are an expert database engineer specializing in ${d.label}.
-- Write clean optimized production-ready SQL for ${d.label}
+    const sys = `You are an expert database engineer for ${d.label}.
 - ${dialect === 'oracle' ? 'Use Oracle syntax: ROWNUM, NVL, DECODE, TO_DATE, SYSDATE, DUAL, sequences' : ''}
 - ${dialect === 'oracle_plsql' ? 'Use full PL/SQL: DECLARE, BEGIN, END, cursors, exceptions, packages, triggers' : ''}
 - ${dialect === 'bigquery' ? 'Use BigQuery syntax: backtick table names, ARRAY, STRUCT, UNNEST, QUALIFY, dataset.table format' : ''}
 - ${dialect === 'bigquery_scripting' ? 'Use BigQuery scripting: DECLARE, SET, BEGIN/END, IF/ELSE, LOOP, CALL, CREATE TEMP TABLE' : ''}
-- Add comments for complex logic
-- ONLY output SQL code. No markdown fences.`
+- Add comments, ONLY output SQL code, no markdown fences.`
     try {
-      const { raw, modelId } = await runWithRetry(apiKey, sys, sqlPrompt, setSqlMsg)
+      const { raw, actualModel } = await runWithRetry(apiKey, [{ role: 'system', content: sys }, { role: 'user', content: sqlPrompt }], setSqlMsg)
       const cleaned = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim()
-      setSqlCode(cleaned); setSqlModel(modelId)
-      setHistory(h => [{ type: 'sql', prompt: sqlPrompt, output: cleaned, model: modelId, label: d.label, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, ...h].slice(0, 30))
+      setSqlCode(cleaned); setSqlModel(actualModel)
+      setHistory(h => [{ type: 'sql', prompt: sqlPrompt, output: cleaned, model: actualModel, label: d.label, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, ...h].slice(0, 30))
     } catch (e) { setSqlError(e.message) }
     setSqlLoading(false)
   }
@@ -235,23 +285,17 @@ Style: ${style}, Page type: ${pageType}
     if (!apiKey) { setCsError('Enter your OpenRouter API key first.'); return }
     setCsLoading(true); setCsError(''); setCsCode(''); setCsModel('')
     const t = CSHARP_TYPES.find(x => x.id === csType)
-    const sys = `You are an expert C# and .NET developer specializing in ${t.label}.
-- Write clean, production-ready, modern C# code (.NET 8+)
-- Use latest C# features: records, pattern matching, nullable reference types, async/await
-- ${csType === 'aspnet' ? 'Use ASP.NET Core best practices: minimal APIs or controllers, dependency injection, middleware, proper HTTP status codes, model validation' : ''}
-- ${csType === 'ef' ? 'Use EF Core best practices: DbContext, migrations, relationships, Fluent API configuration, async queries, no-tracking for reads' : ''}
-- ${csType === 'console' ? 'Use .NET generic host, IHostedService, dependency injection, configuration, logging with Microsoft.Extensions.Logging' : ''}
-- ${csType === 'library' ? 'Use SOLID principles, interfaces, dependency injection friendly, XML documentation comments, proper exception handling' : ''}
-- ${csType === 'blazor' ? 'Use Blazor best practices: component lifecycle, EventCallback, cascading parameters, JS interop when needed, proper state management' : ''}
-- ${csType === 'test' ? 'Use xUnit with Moq and FluentAssertions, arrange-act-assert pattern, meaningful test names, cover edge cases and error scenarios' : ''}
-- Add XML doc comments on public members
-- Include using statements at top
-- ONLY output raw C# code. No markdown fences, no explanation.`
+    const sys = `You are an expert C# .NET 8 developer for ${t.label}.
+- Modern C#: records, pattern matching, nullable types, async/await
+- ${csType === 'aspnet' ? 'ASP.NET Core best practices: DI, middleware, proper status codes, model validation' : ''}
+- ${csType === 'ef' ? 'EF Core: DbContext, Fluent API, async queries, relationships, migrations' : ''}
+- ${csType === 'test' ? 'xUnit with Moq and FluentAssertions, arrange-act-assert, meaningful test names' : ''}
+- XML doc comments on public members, ONLY output raw C# code, no markdown fences.`
     try {
-      const { raw, modelId } = await runWithRetry(apiKey, sys, csPrompt, setCsMsg)
+      const { raw, actualModel } = await runWithRetry(apiKey, [{ role: 'system', content: sys }, { role: 'user', content: csPrompt }], setCsMsg)
       const cleaned = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim()
-      setCsCode(cleaned); setCsModel(modelId)
-      setHistory(h => [{ type: 'cs', prompt: csPrompt, output: cleaned, model: modelId, label: csFilename, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, ...h].slice(0, 30))
+      setCsCode(cleaned); setCsModel(actualModel)
+      setHistory(h => [{ type: 'cs', prompt: csPrompt, output: cleaned, model: actualModel, label: csFilename, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, ...h].slice(0, 30))
     } catch (e) { setCsError(e.message) }
     setCsLoading(false)
   }
@@ -267,7 +311,7 @@ Style: ${style}, Page type: ${pageType}
             <div style={styles.logoIcon}>{'</>'}</div>
             <div>
               <div style={styles.logoTitle}>Dev Agent</div>
-              <div style={styles.logoSub}>JSX · SQL · C# · Powered by OpenRouter</div>
+              <div style={styles.logoSub}>Chat · JSX · SQL · C# · Powered by OpenRouter</div>
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -281,16 +325,17 @@ Style: ${style}, Page type: ${pageType}
         {!keySet && (
           <div style={styles.keyBox}>
             <div style={styles.keyTitle}>🔑 Enter your OpenRouter API Key</div>
-            <div style={styles.keySub}>Free to sign up — no credit card needed. Get your key at <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" style={styles.link}>openrouter.ai/keys</a>. Stored only in your browser.</div>
+            <div style={styles.keySub}>Free to sign up — no credit card needed. Get your key at <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" style={styles.link}>openrouter.ai/keys</a>.</div>
             <div style={styles.keyRow}>
               <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveKey()} placeholder="sk-or-v1-..." style={styles.keyInput} />
               <button onClick={saveKey} disabled={!apiKey.trim()} style={styles.saveKeyBtn}>Save Key</button>
             </div>
-            <div style={styles.freeNote}>✅ Auto-retries {FREE_MODELS.length} free models until one works — no billing needed</div>
+            <div style={styles.freeNote}>✅ Auto-retries {FREE_MODELS.length} free models — no billing needed</div>
           </div>
         )}
 
         <div style={styles.tabs}>
+          <button onClick={() => setTab('chat')} style={{ ...styles.tab, ...(tab === 'chat' ? { ...styles.tabActive, color: '#34d399', borderBottomColor: '#34d399' } : {}) }}>💬 Chat</button>
           <button onClick={() => setTab('jsx')} style={{ ...styles.tab, ...(tab === 'jsx' ? styles.tabActive : {}) }}>⚛ JSX</button>
           <button onClick={() => setTab('sql')} style={{ ...styles.tab, ...(tab === 'sql' ? { ...styles.tabActive, color: dialect.includes('oracle') ? '#fb923c' : '#38bdf8', borderBottomColor: dialect.includes('oracle') ? '#fb923c' : '#38bdf8' } : {}) }}>🗄 SQL</button>
           <button onClick={() => setTab('cs')} style={{ ...styles.tab, ...(tab === 'cs' ? { ...styles.tabActive, color: '#a3e635', borderBottomColor: '#a3e635' } : {}) }}>🟢 C#</button>
@@ -299,27 +344,90 @@ Style: ${style}, Page type: ${pageType}
           </button>
         </div>
 
+        {/* CHAT TAB */}
+        {tab === 'chat' && (
+          <div style={styles.chatContainer}>
+            {/* Starter suggestions - only when just the welcome message */}
+            {messages.length === 1 && (
+              <div style={styles.starterGrid}>
+                {CHAT_STARTERS.map((s, i) => (
+                  <button key={i} onClick={() => sendChat(s)} style={styles.starterBtn}>{s}</button>
+                ))}
+              </div>
+            )}
+
+            {/* Messages */}
+            <div style={styles.messageList}>
+              {messages.map((msg, i) => (
+                <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: 16 }}>
+                  {msg.role === 'assistant' && (
+                    <div style={styles.assistantLabel}>
+                      <div style={styles.agentAvatar}>A</div>
+                      <span style={{ fontSize: 11, color: '#444' }}>Dev Agent</span>
+                      {msg.model && <span style={{ ...styles.modelTag, fontSize: 10, marginLeft: 4 }}>✓ {modelDisplayName(msg.model)}</span>}
+                    </div>
+                  )}
+                  <div style={msg.role === 'user' ? styles.userBubble : styles.assistantBubble}>
+                    {msg.role === 'user' ? msg.content : renderMessage(msg.content)}
+                  </div>
+                </div>
+              ))}
+
+              {chatLoading && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', marginBottom: 16 }}>
+                  <div style={styles.assistantLabel}>
+                    <div style={styles.agentAvatar}>A</div>
+                    <span style={{ fontSize: 11, color: '#444' }}>{chatLoadingMsg || 'Thinking...'}</span>
+                  </div>
+                  <div style={{ ...styles.assistantBubble, padding: '12px 16px' }}>
+                    <div style={styles.typingDots}>
+                      <span style={{ ...styles.dot, animationDelay: '0s' }} />
+                      <span style={{ ...styles.dot, animationDelay: '0.2s' }} />
+                      <span style={{ ...styles.dot, animationDelay: '0.4s' }} />
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* Input */}
+            <div style={styles.chatInputRow}>
+              <div style={styles.chatInputWrap}>
+                <textarea
+                  ref={chatInputRef}
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat() } }}
+                  placeholder="Ask anything — code help, debugging, architecture, explanations... (Enter to send, Shift+Enter for new line)"
+                  style={styles.chatInput}
+                  rows={2}
+                  disabled={!keySet}
+                />
+                <div style={styles.chatActions}>
+                  <button onClick={clearChat} style={styles.clearChatBtn} title="Clear chat">🗑</button>
+                  <button onClick={() => sendChat()} disabled={!chatInput.trim() || chatLoading || !keySet} style={styles.sendBtn}>
+                    {chatLoading ? <span style={styles.spinner} /> : '↑'}
+                  </button>
+                </div>
+              </div>
+              {!keySet && <div style={{ fontSize: 11, color: '#555', marginTop: 6, textAlign: 'center' }}>Enter your OpenRouter key above to start chatting</div>}
+            </div>
+          </div>
+        )}
+
         {/* JSX TAB */}
         {tab === 'jsx' && (
           <div style={styles.pane}>
             <div style={styles.row}>
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Page type</label>
-                <select value={pageType} onChange={e => setPageType(e.target.value)} style={styles.select}>{PAGE_TYPES.map(t => <option key={t}>{t}</option>)}</select>
-              </div>
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Style</label>
-                <select value={style} onChange={e => setStyle(e.target.value)} style={styles.select}>{STYLES.map(s => <option key={s}>{s}</option>)}</select>
-              </div>
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>File name</label>
-                <input type="text" value={filename} onChange={e => setFilename(e.target.value)} style={styles.input} />
-              </div>
+              <div style={styles.inputGroup}><label style={styles.label}>Page type</label><select value={pageType} onChange={e => setPageType(e.target.value)} style={styles.select}>{PAGE_TYPES.map(t => <option key={t}>{t}</option>)}</select></div>
+              <div style={styles.inputGroup}><label style={styles.label}>Style</label><select value={jsxStyle} onChange={e => setJsxStyle(e.target.value)} style={styles.select}>{STYLES.map(s => <option key={s}>{s}</option>)}</select></div>
+              <div style={styles.inputGroup}><label style={styles.label}>File name</label><input type="text" value={filename} onChange={e => setFilename(e.target.value)} style={styles.input} /></div>
             </div>
             <div><div style={styles.label}>Quick prompts</div><div style={styles.chips}>{JSX_PROMPTS.map(q => <button key={q.label} onClick={() => setJsxPrompt(q.prompt)} style={styles.chip}>{q.label}</button>)}</div></div>
             <div style={styles.inputGroup}>
               <label style={styles.label}>Describe your page</label>
-              <textarea ref={jsxRef} value={jsxPrompt} onChange={e => setJsxPrompt(e.target.value)} onKeyDown={e => e.key === 'Enter' && e.ctrlKey && generateJsx()} placeholder="e.g. Admin dashboard with sidebar, stats cards, revenue chart and orders table..." style={styles.textarea} rows={4} />
+              <textarea ref={jsxRef} value={jsxPrompt} onChange={e => setJsxPrompt(e.target.value)} onKeyDown={e => e.key === 'Enter' && e.ctrlKey && generateJsx()} placeholder="e.g. Admin dashboard with sidebar, stats cards, revenue chart..." style={styles.textarea} rows={4} />
               <div style={styles.hint}>Ctrl + Enter to generate</div>
             </div>
             <button onClick={generateJsx} disabled={jsxLoading || !keySet} style={styles.genBtn}>
@@ -329,10 +437,7 @@ Style: ${style}, Page type: ${pageType}
             {jsxCode && !jsxLoading && (
               <div style={styles.outputBox}>
                 <div style={styles.outputHeader}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={styles.fname}>{filename}</span>
-                    <span style={styles.modelTag}>✓ {modelDisplayName(jsxModel)}</span>
-                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={styles.fname}>{filename}</span><span style={styles.modelTag}>✓ {modelDisplayName(jsxModel)}</span></div>
                   <CopyButton text={jsxCode} />
                 </div>
                 <pre style={styles.codeBlock}>{jsxCode}</pre>
@@ -358,20 +463,17 @@ Style: ${style}, Page type: ${pageType}
             <div><div style={styles.label}>Quick prompts</div><div style={styles.chips}>{SQL_PROMPTS.map(q => <button key={q.label} onClick={() => setSqlPrompt(q.prompt)} style={styles.chip}>{q.label}</button>)}</div></div>
             <div style={styles.inputGroup}>
               <label style={styles.label}>Describe your query</label>
-              <textarea ref={sqlRef} value={sqlPrompt} onChange={e => setSqlPrompt(e.target.value)} onKeyDown={e => e.key === 'Enter' && e.ctrlKey && generateSql()} placeholder={dialect.includes('oracle') ? 'e.g. Get top 10 customers by orders in last 90 days using Oracle syntax with proper date functions...' : 'e.g. BigQuery query to analyze sales from dataset.orders partitioned by date with ARRAY aggregation...'} style={styles.textarea} rows={4} />
+              <textarea ref={sqlRef} value={sqlPrompt} onChange={e => setSqlPrompt(e.target.value)} onKeyDown={e => e.key === 'Enter' && e.ctrlKey && generateSql()} placeholder={dialect.includes('oracle') ? 'e.g. Top 10 customers by orders last 90 days with Oracle syntax...' : 'e.g. BigQuery sales analysis with ARRAY aggregation and partitioning...'} style={styles.textarea} rows={4} />
               <div style={styles.hint}>Ctrl + Enter to generate</div>
             </div>
             <button onClick={generateSql} disabled={sqlLoading || !keySet} style={{ ...styles.genBtn, background: dialect.includes('oracle') ? 'linear-gradient(135deg, #c2410c, #ea580c)' : 'linear-gradient(135deg, #1d4ed8, #0284c7)' }}>
               {sqlLoading ? <span style={styles.btnInner}><span style={styles.spinner} />{sqlMsg}</span> : `Generate ${selectedDialect?.label} ↗`}
             </button>
-            {sqlError && <div style={styles.errorBox}><strong>⚠</strong> {sqlError}<div style={{ marginTop: 8, fontSize: 12, color: '#ffaa80' }}>💡 Add $1 at <a href="https://openrouter.ai/credits" target="_blank" rel="noreferrer" style={styles.link}>openrouter.ai/credits</a></div></div>}
+            {sqlError && <div style={styles.errorBox}><strong>⚠</strong> {sqlError}</div>}
             {sqlCode && !sqlLoading && (
               <div style={styles.outputBox}>
                 <div style={styles.outputHeader}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={styles.fname}>{selectedDialect?.label}</span>
-                    <span style={{ ...styles.modelTag, background: dialect.includes('oracle') ? '#1a0800' : '#00102a', color: dialect.includes('oracle') ? '#fb923c' : '#38bdf8' }}>✓ {modelDisplayName(sqlModel)}</span>
-                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={styles.fname}>{selectedDialect?.label}</span><span style={{ ...styles.modelTag, background: dialect.includes('oracle') ? '#1a0800' : '#00102a', color: dialect.includes('oracle') ? '#fb923c' : '#38bdf8' }}>✓ {modelDisplayName(sqlModel)}</span></div>
                   <CopyButton text={sqlCode} />
                 </div>
                 <pre style={{ ...styles.codeBlock, color: '#86efac' }}>{sqlCode}</pre>
@@ -398,25 +500,19 @@ Style: ${style}, Page type: ${pageType}
             <div style={styles.row}>
               <div style={{ ...styles.inputGroup, flex: 3 }}>
                 <label style={styles.label}>Describe your C# code</label>
-                <textarea ref={csRef} value={csPrompt} onChange={e => setCsPrompt(e.target.value)} onKeyDown={e => e.key === 'Enter' && e.ctrlKey && generateCs()} placeholder="e.g. ASP.NET Core Web API controller for managing products with CRUD operations, validation, pagination and proper error handling..." style={styles.textarea} rows={4} />
+                <textarea ref={csRef} value={csPrompt} onChange={e => setCsPrompt(e.target.value)} onKeyDown={e => e.key === 'Enter' && e.ctrlKey && generateCs()} placeholder="e.g. ASP.NET Core Web API controller for products with CRUD, validation, pagination..." style={styles.textarea} rows={4} />
                 <div style={styles.hint}>Ctrl + Enter to generate</div>
               </div>
-              <div style={{ ...styles.inputGroup, flex: 1 }}>
-                <label style={styles.label}>File name</label>
-                <input type="text" value={csFilename} onChange={e => setCsFilename(e.target.value)} style={styles.input} placeholder="MyService.cs" />
-              </div>
+              <div style={{ ...styles.inputGroup, flex: 1 }}><label style={styles.label}>File name</label><input type="text" value={csFilename} onChange={e => setCsFilename(e.target.value)} style={styles.input} placeholder="MyService.cs" /></div>
             </div>
             <button onClick={generateCs} disabled={csLoading || !keySet} style={{ ...styles.genBtn, background: 'linear-gradient(135deg, #4d7c0f, #65a30d)' }}>
               {csLoading ? <span style={styles.btnInner}><span style={styles.spinner} />{csMsg}</span> : `Generate ${selectedCsType?.label} ↗`}
             </button>
-            {csError && <div style={styles.errorBox}><strong>⚠</strong> {csError}<div style={{ marginTop: 8, fontSize: 12, color: '#ffaa80' }}>💡 Add $1 at <a href="https://openrouter.ai/credits" target="_blank" rel="noreferrer" style={styles.link}>openrouter.ai/credits</a></div></div>}
+            {csError && <div style={styles.errorBox}><strong>⚠</strong> {csError}</div>}
             {csCode && !csLoading && (
               <div style={styles.outputBox}>
                 <div style={styles.outputHeader}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={styles.fname}>{csFilename}</span>
-                    <span style={{ ...styles.modelTag, background: '#0a1a00', color: '#a3e635' }}>✓ {modelDisplayName(csModel)}</span>
-                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={styles.fname}>{csFilename}</span><span style={{ ...styles.modelTag, background: '#0a1a00', color: '#a3e635' }}>✓ {modelDisplayName(csModel)}</span></div>
                   <CopyButton text={csCode} />
                 </div>
                 <pre style={{ ...styles.codeBlock, color: '#bfdbfe' }}>{csCode}</pre>
@@ -442,9 +538,7 @@ Style: ${style}, Page type: ${pageType}
                   <span style={{ marginLeft: 'auto', fontSize: 11, color: '#444' }}>{h.time}</span>
                 </div>
                 <div style={styles.histPrompt}>{h.prompt.slice(0, 100)}{h.prompt.length > 100 ? '...' : ''}</div>
-                <div style={{ marginTop: 6 }}>
-                  <span style={{ ...styles.modelTag, fontSize: 10 }}>✓ {modelDisplayName(h.model)}</span>
-                </div>
+                <div style={{ marginTop: 6 }}><span style={{ ...styles.modelTag, fontSize: 10 }}>✓ {modelDisplayName(h.model)}</span></div>
               </div>
             ))}
           </div>
@@ -454,6 +548,7 @@ Style: ${style}, Page type: ${pageType}
       <style>{`
         @keyframes dotPulse { 0%,80%,100%{opacity:.2;transform:scale(.8)} 40%{opacity:1;transform:scale(1)} }
         @keyframes spin { to { transform: rotate(360deg); } }
+        textarea:focus, select:focus, input:focus { border-color: #7c3aed !important; }
       `}</style>
     </div>
   )
@@ -478,10 +573,28 @@ const styles = {
   keyRow: { display: 'flex', gap: 10 },
   keyInput: { flex: 1, padding: '9px 14px', borderRadius: 8, border: '1px solid #2a2a3a', background: '#0f0f13', color: '#e8e8f0', fontFamily: 'JetBrains Mono, monospace', fontSize: 13, outline: 'none' },
   saveKeyBtn: { background: 'linear-gradient(135deg, #7c3aed, #2563eb)', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 22px', fontFamily: 'Inter, sans-serif', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  tabs: { display: 'flex', borderBottom: '1px solid #2a2a3a', gap: 0 },
-  tab: { background: 'none', border: 'none', borderBottom: '2px solid transparent', color: '#555', fontSize: 13, padding: '8px 18px', cursor: 'pointer', fontFamily: 'Inter, sans-serif', display: 'flex', alignItems: 'center', gap: 6 },
+  tabs: { display: 'flex', borderBottom: '1px solid #2a2a3a' },
+  tab: { background: 'none', border: 'none', borderBottom: '2px solid transparent', color: '#555', fontSize: 13, padding: '8px 16px', cursor: 'pointer', fontFamily: 'Inter, sans-serif', display: 'flex', alignItems: 'center', gap: 6 },
   tabActive: { color: '#818cf8', borderBottomColor: '#818cf8' },
   badge: { background: '#2a2a3a', color: '#888', fontSize: 10, padding: '1px 6px', borderRadius: 10, fontWeight: 600 },
+  // Chat
+  chatContainer: { display: 'flex', flexDirection: 'column', gap: 16 },
+  starterGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 },
+  starterBtn: { padding: '10px 14px', background: '#16161e', border: '1px solid #2a2a3a', borderRadius: 10, color: '#aaa', cursor: 'pointer', fontFamily: 'Inter, sans-serif', fontSize: 12, textAlign: 'left', lineHeight: 1.4 },
+  messageList: { display: 'flex', flexDirection: 'column', minHeight: 200, maxHeight: 520, overflowY: 'auto', padding: '4px 0' },
+  assistantLabel: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 },
+  agentAvatar: { width: 24, height: 24, borderRadius: '50%', background: 'linear-gradient(135deg, #7c3aed, #2563eb)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: '#fff', flexShrink: 0 },
+  userBubble: { background: '#1e1e3a', border: '1px solid #2a2a4a', borderRadius: '18px 18px 4px 18px', padding: '10px 16px', fontSize: 14, lineHeight: 1.6, maxWidth: '80%', color: '#e8e8f0', fontFamily: 'Inter, sans-serif' },
+  assistantBubble: { background: '#16161e', border: '1px solid #2a2a3a', borderRadius: '4px 18px 18px 18px', padding: '12px 16px', fontSize: 14, lineHeight: 1.7, maxWidth: '90%', color: '#c8d3f5', fontFamily: 'Inter, sans-serif' },
+  typingDots: { display: 'flex', gap: 4, alignItems: 'center' },
+  dot: { width: 6, height: 6, borderRadius: '50%', background: '#7c3aed', display: 'inline-block', animation: 'dotPulse 1.2s ease-in-out infinite' },
+  chatInputRow: { display: 'flex', flexDirection: 'column', gap: 4 },
+  chatInputWrap: { display: 'flex', gap: 8, alignItems: 'flex-end', background: '#16161e', border: '1px solid #2a2a3a', borderRadius: 12, padding: '8px 10px' },
+  chatInput: { flex: 1, background: 'none', border: 'none', outline: 'none', color: '#e8e8f0', fontFamily: 'Inter, sans-serif', fontSize: 14, resize: 'none', lineHeight: 1.5 },
+  chatActions: { display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 },
+  clearChatBtn: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: '4px', opacity: 0.5 },
+  sendBtn: { width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg, #7c3aed, #2563eb)', border: 'none', color: '#fff', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0 },
+  // Generators
   pane: { display: 'flex', flexDirection: 'column', gap: 18 },
   dialectGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginTop: 6 },
   dialectBtn: { padding: '12px 16px', borderRadius: 10, border: '1px solid #2a2a3a', background: '#16161e', color: '#888', cursor: 'pointer', fontFamily: 'Inter, sans-serif', textAlign: 'left' },
