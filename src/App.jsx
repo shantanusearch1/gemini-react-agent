@@ -135,7 +135,7 @@ async function tryModel(apiKey, modelId, messages) {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
       'HTTP-Referer': window.location.href,
-      'X-Title': 'Dev Agent',
+      'X-Title': 'Shan Agent',
     },
     body: JSON.stringify({ model: modelId, messages, max_tokens: 8000, temperature: 0.3 }),
   })
@@ -170,7 +170,7 @@ export default function App() {
   const [tab, setTab] = useState('chat')
 
   // Chat state
-  const [messages, setMessages] = useState([{ role: 'assistant', content: "Hi! I'm your Dev Agent. Ask me anything — code questions, debugging help, architecture advice, explanations, or anything else. I also generate React JSX, SQL (Oracle/BigQuery), and C# code in the other tabs!", model: '' }])
+  const [messages, setMessages] = useState([{ role: 'assistant', content: "Hi! Agent Ready'' }])
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   const [chatLoadingMsg, setChatLoadingMsg] = useState('')
