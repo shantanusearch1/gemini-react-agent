@@ -346,15 +346,8 @@ Style: ${jsxStyle}, Page type: ${pageType}
 
         {/* CHAT TAB */}
         {tab === 'chat' && (
-          <div style={styles.chatContainer}>
-            {/* Starter suggestions - only when just the welcome message */}
-            {messages.length === 1 && (
-              <div style={styles.starterGrid}>
-                {CHAT_STARTERS.map((s, i) => (
-                  <button key={i} onClick={() => sendChat(s)} style={styles.starterBtn}>{s}</button>
-                ))}
-              </div>
-            )}
+          <div style={{ ...styles.chatContainer, display: 'flex', flexDirection: 'column' }}>
+            
 
             {/* Messages */}
             <div style={styles.messageList}>
@@ -586,7 +579,7 @@ const styles = {
   chatContainer: { display: 'flex', flexDirection: 'column', gap: 16 },
   starterGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 },
   starterBtn: { padding: '10px 14px', background: '#16161e', border: '1px solid #2a2a3a', borderRadius: 10, color: '#aaa', cursor: 'pointer', fontFamily: 'Inter, sans-serif', fontSize: 12, textAlign: 'left', lineHeight: 1.4 },
-  messageList: { display: 'flex', flexDirection: 'column', minHeight: 200, maxHeight: 520, overflowY: 'auto', padding: '4px 0' },
+  messageList: { display: 'flex', flexDirection: 'column', minHeight: 300, maxHeight: 560, overflowY: 'auto', padding: '4px 0', marginBottom: 8 },
   assistantLabel: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 },
   agentAvatar: { width: 24, height: 24, borderRadius: '50%', background: 'linear-gradient(135deg, #7c3aed, #2563eb)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: '#fff', flexShrink: 0 },
   userBubble: { background: '#1e1e3a', border: '1px solid #2a2a4a', borderRadius: '18px 18px 4px 18px', padding: '10px 16px', fontSize: 14, lineHeight: 1.6, maxWidth: '80%', color: '#e8e8f0', fontFamily: 'Inter, sans-serif' },
