@@ -241,7 +241,7 @@ export default function App() {
     setChatLoadingMsg('')
   }
 
-  const clearChat = () => setMessages([{ role: 'assistant', content: "Hi! I'm your Shan Agent. Ask me anything])
+  const clearChat = () => setMessages([{ role: 'assistant', content: "Hi! I'm your Shan Agent. Ask me anything"])
 
   const generateJsx = async () => {
     if (!jsxPrompt.trim()) { jsxRef.current?.focus(); return }
