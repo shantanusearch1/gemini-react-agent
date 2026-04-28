@@ -310,12 +310,12 @@ Style: ${jsxStyle}, Page type: ${pageType}
           <div style={styles.logo}>
             <div style={styles.logoIcon}>{'</>'}</div>
             <div>
-              <div style={styles.logoTitle}>Dev Agent</div>
-              <div style={styles.logoSub}>Chat · JSX · SQL · C# · Powered by OpenRouter</div>
+              <div style={styles.logoTitle}>Shan Agent</div>
+              
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {keySet && <div style={styles.keyBadge}><span style={{ color: '#4ade80' }}>●</span> OpenRouter connected</div>}
+            {keySet && <div style={styles.keyBadge}><span style={{ color: '#4ade80' }}>●</span> Router connected</div>}
             {keySet && <button onClick={clearKey} style={styles.clearKeyBtn}>Change Key</button>}
           </div>
         </div>
@@ -370,6 +370,11 @@ Style: ${jsxStyle}, Page type: ${pageType}
                   <div style={msg.role === 'user' ? styles.userBubble : styles.assistantBubble}>
                     {msg.role === 'user' ? msg.content : renderMessage(msg.content)}
                   </div>
+                  {msg.role === 'assistant' && msg.content && !msg.content.startsWith('Hi!') && (
+                    <div style={{ marginTop: 4 }}>
+                      <CopyButton text={msg.content} />
+                    </div>
+                  )}
                 </div>
               ))}
 
