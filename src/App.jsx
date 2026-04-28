@@ -25,13 +25,12 @@ const STYLES = [
   'Colorful and bold',
 ]
 
-// Gemini models available
 const MODELS = [
-  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (Fastest)' },
-  { id: 'gemini-2.5-pro-preview-05-06', label: 'Gemini 2.5 Pro (Best quality)' },
-  { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+  { id: 'google/gemini-2.0-flash-exp:free', label: '🟢 Gemini 2.0 Flash (Free)' },
+  { id: 'meta-llama/llama-3.3-70b-instruct:free', label: '🟢 Llama 3.3 70B (Free)' },
+  { id: 'deepseek/deepseek-chat-v3-0324:free', label: '🟢 DeepSeek V3 (Free)' },
+  { id: 'mistralai/mistral-7b-instruct:free', label: '🟢 Mistral 7B (Free)' },
 ]
-
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false)
   const copy = () => {
@@ -44,8 +43,8 @@ function CopyButton({ text }) {
 }
 
 export default function App() {
-  const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '')
-  const [keySet, setKeySet] = useState(!!localStorage.getItem('gemini_key'))
+  const [apiKey, setApiKey] = useState(localStorage.getItem('openrouter_key') || '')
+  const [keySet, setKeySet] = useState(!!localStorage.getItem('openrouter_key'))
   const [prompt, setPrompt] = useState('')
   const [pageType, setPageType] = useState('Full page')
   const [style, setStyle] = useState('Modern clean Tailwind CSS')
@@ -60,13 +59,13 @@ export default function App() {
 
   const saveKey = () => {
     if (!apiKey.trim()) return
-    localStorage.setItem('gemini_key', apiKey.trim())
+    localStorage.setItem('openrouter_key', apiKey.trim())
     setKeySet(true)
     setError('')
   }
 
   const clearKey = () => {
-    localStorage.removeItem('gemini_key')
+    localStorage.removeItem('openrouter_key')
     setApiKey('')
     setKeySet(false)
   }
@@ -91,23 +90,24 @@ Rules:
 
     const userPrompt = `Create a ${pageType} React JSX file: ${prompt}`
 
-    try {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            system_instruction: { parts: [{ text: systemInstruction }] },
-            contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-            generationConfig: {
-              temperature: 0.7,
-              maxOutputTokens: 8192,
-            },
-          }),
-        }
-      )
-
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      'HTTP-Referer': window.location.href,
+      'X-Title': 'React Frontend Agent',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 8000,
+      temperature: 0.7,
+    }),
+  })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         const msg = err?.error?.message || `HTTP ${res.status}`
@@ -115,7 +115,7 @@ Rules:
       }
 
       const data = await res.json()
-      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || ''
+      const raw = data?.choices?.[0]?.message?.content || ''
       const cleaned = raw
         .replace(/^```[a-z]*\n?/i, '')
         .replace(/\n?```$/i, '')
@@ -187,7 +187,7 @@ Rules:
                 value={apiKey}
                 onChange={e => setApiKey(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && saveKey()}
-                placeholder="AIza..."
+                placeholder="sk-or-v1-..."
                 style={styles.keyInput}
               />
               <button onClick={saveKey} disabled={!apiKey.trim()} style={styles.saveKeyBtn}>
