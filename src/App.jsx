@@ -241,7 +241,7 @@ export default function App() {
     setChatLoadingMsg('')
   }
 
-  const clearChat = () => setMessages([{ role: 'assistant', content: "Hi! I'm your Dev Agent. Ask me anything — code questions, debugging, architecture advice, or anything else!", model: '' }])
+  const clearChat = () => setMessages([{ role: 'assistant', content: "Hi! I'm your Shan Agent. Ask me anything])
 
   const generateJsx = async () => {
     if (!jsxPrompt.trim()) { jsxRef.current?.focus(); return }
@@ -356,7 +356,7 @@ Style: ${jsxStyle}, Page type: ${pageType}
                   {msg.role === 'assistant' && (
                     <div style={styles.assistantLabel}>
                       <div style={styles.agentAvatar}>A</div>
-                      <span style={{ fontSize: 11, color: '#444' }}>Dev Agent</span>
+                      <span style={{ fontSize: 11, color: '#444' }}>Shan Agent</span>
                       {msg.model && <span style={{ ...styles.modelTag, fontSize: 10, marginLeft: 4 }}>✓ {modelDisplayName(msg.model)}</span>}
                     </div>
                   )}
