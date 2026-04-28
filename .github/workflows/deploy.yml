@@ -34,7 +34,7 @@ jobs:
         run: npm install --no-package-lock
 
       - name: Build
-        run: npx vite build --base=/react-agent/
+        run: npx vite build --base=/gemini-react-agent/
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
