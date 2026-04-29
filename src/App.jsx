@@ -40,7 +40,7 @@ const CHAT_STARTERS = [
   '🐛 How do I fix CORS errors in ASP.NET Core?',
   '📊 What is the best way to optimize a slow SQL query?',
   '🔐 How does JWT authentication work?',
-  '⚡ What are React hooks and when to use them?',
+  '⚡ What are React Hooks and when to use them?',
   '🏗 Explain microservices vs monolitc arctecture',
   '🔄 What is CI/CD and how to set it up?',
   '📦 How do I implement cacng in .NET?',
