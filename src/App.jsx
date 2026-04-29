@@ -500,7 +500,7 @@ export default function App() {
                 <Divider />
                 <div style={{ padding: 12, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
                   <textarea value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat() } }}
-                    placeholder={keySet ? 'Ask anything — code help, debugging, architecture... (Enter to send, Shift+Enter for new line)' : 'Add your OpenRouter key to start chatting'}
+                    placeholder={keySet ? 'Ask anything — code help, debugging, architecture... (Enter to send, Shift+Enter for new line)' : 'Start Chatting'}
                     disabled={!keySet}
                     style={{ flex: 1, padding: '10px 14px', borderRadius: 4, border: `1px solid ${M.outline}`, background: M.surfaceVariant, color: M.onSurface, fontFamily: 'Roboto, sans-serif', fontSize: 14, resize: 'none', outline: 'none', lineHeight: 1.5, maxHeight: 120, overflowY: 'auto' }} rows={2} />
                   <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
