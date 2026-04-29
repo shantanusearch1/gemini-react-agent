@@ -245,7 +245,7 @@ export default function App() {
 
   const generateJsx = async () => {
     if (!jsxPrompt.trim()) { jsxRef.current?.focus(); return }
-    if (!apiKey) { setJsxError('Enter your OpenRouter API key first.'); return }
+    if (!apiKey) { setJsxError('Enter API key first.'); return }
     setJsxLoading(true); setJsxError(''); setJsxCode(''); setJsxModel('')
     const sys = `You are an expert React developer. Generate complete production-ready .jsx files.
 Style: ${jsxStyle}, Page type: ${pageType}
@@ -262,7 +262,7 @@ Style: ${jsxStyle}, Page type: ${pageType}
 
   const generateSql = async () => {
     if (!sqlPrompt.trim()) { sqlRef.current?.focus(); return }
-    if (!apiKey) { setSqlError('Enter your OpenRouter API key first.'); return }
+    if (!apiKey) { setSqlError('Enter API key first.'); return }
     setSqlLoading(true); setSqlError(''); setSqlCode(''); setSqlModel('')
     const d = SQL_DIALECTS.find(x => x.id === dialect)
     const sys = `You are an expert database engineer for ${d.label}.
@@ -282,7 +282,7 @@ Style: ${jsxStyle}, Page type: ${pageType}
 
   const generateCs = async () => {
     if (!csPrompt.trim()) { csRef.current?.focus(); return }
-    if (!apiKey) { setCsError('Enter your OpenRouter API key first.'); return }
+    if (!apiKey) { setCsError('Enter API key first.'); return }
     setCsLoading(true); setCsError(''); setCsCode(''); setCsModel('')
     const t = CSHARP_TYPES.find(x => x.id === csType)
     const sys = `You are an expert C# .NET 8 developer for ${t.label}.
@@ -324,7 +324,7 @@ Style: ${jsxStyle}, Page type: ${pageType}
       <main style={styles.main}>
         {!keySet && (
           <div style={styles.keyBox}>
-            <div style={styles.keyTitle}>🔑 Enter your OpenRouter API Key</div>
+            <div style={styles.keyTitle}>🔑 Enter API Key</div>
             <div style={styles.keySub}>Free to sign up — no credit card needed. Get your key at <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" style={styles.link}>openrouter.ai/keys</a>.</div>
             <div style={styles.keyRow}>
               <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveKey()} placeholder="sk-or-v1-..." style={styles.keyInput} />
@@ -409,7 +409,7 @@ Style: ${jsxStyle}, Page type: ${pageType}
                   </button>
                 </div>
               </div>
-              {!keySet && <div style={{ fontSize: 11, color: '#555', marginTop: 6, textAlign: 'center' }}>Enter your OpenRouter key above to start chatting</div>}
+              {!keySet && <div style={{ fontSize: 11, color: '#555', marginTop: 6, textAlign: 'center' }}>Enter API key above to start chatting</div>}
             </div>
           </div>
         )}
