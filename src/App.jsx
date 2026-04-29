@@ -613,7 +613,7 @@ export default function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 860 }}>
               <Card elevation={1} style={{ padding: 20 }}>
                 <div style={{ fontSize: 14, fontWeight: 500, color: M.onSurface, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Icon name="terminal" size={18} color: '#43A047' /> Project Type
+                  <Icon name="terminal" size={18} color="#43A047" /> Project Type
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginBottom: 16 }}>
                   {CSHARP_TYPES.map(t => (
