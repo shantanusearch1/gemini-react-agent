@@ -435,8 +435,8 @@ export default function App() {
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowKeyDialog(false)}>
             <Card elevation={3} style={{ width: 480, padding: 0, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
               <div style={{ background: M.primaryLight, padding: '16px 24px', color: M.onPrimary }}>
-                <div style={{ fontSize: 18, fontWeight: 500 }}>OpenRouter API Key</div>
-                <div style={{ fontSize: 13, opacity: 0.85, marginTop: 4 }}>Connect to access free AI models</div>
+                <div style={{ fontSize: 18, fontWeight: 500 }}> API Key</div>
+                <div style={{ fontSize: 13, opacity: 0.85, marginTop: 4 }}>Connect to access</div>
               </div>
               <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
                 <div style={{ background: '#E8F5E9', border: '1px solid #C8E6C9', borderRadius: 4, padding: '10px 14px', fontSize: 13, color: M.success, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -444,7 +444,7 @@ export default function App() {
                   Auto-retries {FREE_MODELS.length} free models — no billing needed
                 </div>
                 <div style={{ fontSize: 13, color: M.onSurfaceVariant }}>
-                  Get your free key at <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" style={{ color: M.primary }}>openrouter.ai/keys</a>. Stored only in your browser.
+                  Key is Stored only in your browser.
                 </div>
                 <MTextField label="API Key" value={apiKey} onChange={e => setApiKey(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveKey()} placeholder="sk-or-v1-..." type="password" autoFocus />
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
