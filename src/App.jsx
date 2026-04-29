@@ -252,7 +252,7 @@ export default function App() {
   const [keySet, setKeySet] = useState(!!localStorage.getItem('openrouter_key'))
   const [showKeyDialog, setShowKeyDialog] = useState(false)
 
-  const [messages, setMessages] = useState([{ role: 'assistant', content: "Hello! I'm **Shan Agent**, your AI development assistant. I can help with code questions, debugging, architecture decisions, and more. Use the sidebar to generate **JSX**, **SQL**, or **C#** code!", model: '' }])
+  const [messages, setMessages] = useState([{ role: 'assistant', content: "Hello! I'm **Shan Agent**, Ready", model: '' }])
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   const [chatMsg, setChatMsg] = useState('')
