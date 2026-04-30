@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
+import BOFStaticChargeModel from './BOFStaticChargeModel.jsx'
+import BOFRealTimeTDModel from './BOFRealTimeTDModel.jsx'
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
@@ -67,11 +69,14 @@ const FREE_MODELS = [
 ]
 
 const NAV_ITEMS = [
-  { id: 'chat', icon: 'chat', label: 'Chat' },
-  { id: 'jsx', icon: 'code', label: 'JSX Generator' },
-  { id: 'sql', icon: 'storage', label: 'SQL Generator' },
-  { id: 'cs', icon: 'terminal', label: 'C# Generator' },
-  { id: 'history', icon: 'history', label: 'History' },
+  { id: 'chat', icon: 'chat', label: 'Chat', protected: false },
+  { id: 'jsx', icon: 'code', label: 'JSX Generator', protected: true },
+  { id: 'sql', icon: 'storage', label: 'SQL Generator', protected: true },
+  { id: 'cs', icon: 'terminal', label: 'C# Generator', protected: true },
+  { id: 'history', icon: 'history', label: 'History', protected: true },
+  { id: 'divider', isDivider: true },
+  { id: 'bof_static', icon: 'science', label: 'BOF Static Charge', protected: false },
+  { id: 'bof_td', icon: 'monitor_heart', label: 'BOF TD Prediction', protected: false },
 ]
 
 // Material Design colors
@@ -245,7 +250,7 @@ async function runWithRetry(apiKey, messages, setMsg) {
 
 // ─── APP ─────────────────────────────────────────────────────────────────────
 
-export default function App() {
+export default function App({ user, onLogout }) {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [activeTab, setActiveTab] = useState('chat')
   const [apiKey, setApiKey] = useState(localStorage.getItem('openrouter_key') || '')
@@ -375,10 +380,16 @@ export default function App() {
 
         {/* Nav */}
         <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>
-          {NAV_ITEMS.map(item => {
+        {NAV_ITEMS.map(item => {
+            if (item.isDivider) return (
+              <div key="divider" style={{ margin: '8px 12px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                {sidebarOpen && <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '6px 0 2px' }}>BOF Models</div>}
+              </div>
+            )
             const active = activeTab === item.id
             return (
               <button key={item.id} onClick={() => setActiveTab(item.id)} title={!sidebarOpen ? item.label : ''}
+                
                 style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', width: '100%', border: 'none', background: active ? M.sidebarActive : 'transparent', color: active ? M.sidebarActiveText : M.sidebarText, cursor: 'pointer', fontFamily: 'Roboto, sans-serif', fontSize: 14, fontWeight: active ? 500 : 400, textAlign: 'left', borderLeft: `3px solid ${active ? '#fff' : 'transparent'}`, transition: 'all 0.2s', whiteSpace: 'nowrap', overflow: 'hidden' }}>
                 <Icon name={item.icon} size={22} color={active ? '#fff' : 'rgba(255,255,255,0.6)'} style={{ flexShrink: 0 }} />
                 {sidebarOpen && <span style={{ flex: 1 }}>{item.label}</span>}
@@ -391,7 +402,20 @@ export default function App() {
         </nav>
 
         <Divider />
-
+      {/* User + logout */}
+        <div style={{ padding: '10px 12px', borderTop: '1px solid rgba(255,255,255,0.08)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+            {user?.name?.[0] || 'U'}
+          </div>
+          {sidebarOpen && <div style={{ flex: 1, overflow: 'hidden' }}>
+            <div style={{ fontSize: 12, fontWeight: 500, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.name}</div>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', textTransform: 'capitalize' }}>{user?.role}</div>
+          </div>}
+          {sidebarOpen && <button onClick={onLogout} title="Sign out" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, borderRadius: 4, color: 'rgba(255,255,255,0.4)', display: 'flex' }}>
+            <span className="material-icons" style={{ fontSize: 18, color: 'rgba(255,255,255,0.4)' }}>logout</span>
+          </button>}
+        </div>
+        
         {/* Key status */}
         <div style={{ padding: '12px', flexShrink: 0 }}>
           {keySet ? (
@@ -654,6 +678,20 @@ export default function App() {
                   <pre style={{ margin: 0, padding: 16, fontSize: 12, lineHeight: 1.65, color: '#BBDEFB', background: M.codeBackground, overflow: 'auto', maxHeight: 500, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'JetBrains Mono, monospace' }}>{csCode}</pre>
                 </Card>
               )}
+            </div>
+          )}
+
+          {/* BOF Static Charge Model */}
+          {activeTab === 'bof_static' && (
+            <div style={{ margin: -24 }}>
+              <BOFStaticChargeModel />
+            </div>
+          )}
+
+          {/* BOF Real Time TD Model */}
+          {activeTab === 'bof_td' && (
+            <div style={{ margin: -24 }}>
+              <BOFRealTimeTDModel />
             </div>
           )}
 
