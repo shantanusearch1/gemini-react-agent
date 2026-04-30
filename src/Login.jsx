@@ -112,9 +112,9 @@ export default function Login({ onLogin }) {
           </button>
 
           <div style={{ marginTop: 20, padding: '12px 14px', background: '#F3F4F6', borderRadius: 6, border: '1px solid #E0E0E0' }}>
-            <div style={{ fontSize: 11, color: M.onSurfaceVariant, fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Demo Credentials</div>
+            <div style={{ fontSize: 11, color: M.onSurfaceVariant, fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}> Credentials</div>
             {[
-              { u: 'admin', p: 'shan@2024', r: 'Admin' },              
+              { u: 'admin', p: '', r: 'Admin' },              
             ].map(c => (
               <div key={c.u} style={{ display: 'flex', gap: 8, fontSize: 12, color: M.onSurfaceVariant, marginBottom: 3, fontFamily: 'Roboto Mono, monospace', cursor: 'pointer' }}
                 onClick={() => { setUsername(c.u); setPassword(c.p); setError('') }}>
