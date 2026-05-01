@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import BOFStaticChargeModel from './BOFStaticChargeModel.jsx'
 import BOFRealTimeTDModel from './BOFRealTimeTDModel.jsx'
+import SlabCastingModel from './SlabCastingModel.jsx'
+import BilletCastingModel from './BilletCastingModel.jsx'
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
@@ -77,6 +79,9 @@ const NAV_ITEMS = [
   { id: 'divider', isDivider: true },
   { id: 'bof_static', icon: 'science', label: 'BOF Static Charge', protected: false },
   { id: 'bof_td', icon: 'monitor_heart', label: 'BOF TD Prediction', protected: false },
+  { id: 'divider2', isDivider: true, label: 'Casting Models' },
+  { id: 'slab_casting', icon: 'view_stream', label: 'Slab Casting', protected: false },
+  { id: 'billet_casting', icon: 'grid_on', label: 'Billet Casting', protected: false },
 ]
 
 // Material Design colors
@@ -382,9 +387,9 @@ export default function App({ user, onLogout }) {
         <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>
         {NAV_ITEMS.map(item => {
             if (item.isDivider) return (
-              <div key="divider" style={{ margin: '8px 12px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-                {sidebarOpen && <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '6px 0 2px' }}>BOF Models</div>}
-              </div>
+              <div key={item.id} style={{ margin: '8px 12px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                {sidebarOpen && <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '6px 0 2px' }}>{item.label || 'BOF Models'}</div>}
+              </div>            )
             )
             const active = activeTab === item.id
             return (
@@ -692,6 +697,20 @@ export default function App({ user, onLogout }) {
           {activeTab === 'bof_td' && (
             <div style={{ margin: -24 }}>
               <BOFRealTimeTDModel />
+            </div>
+          )}
+
+          {/* Slab Casting Model */}
+          {activeTab === 'slab_casting' && (
+            <div style={{ margin: -24 }}>
+              <SlabCastingModel />
+            </div>
+          )}
+
+          {/* Billet Casting Model */}
+          {activeTab === 'billet_casting' && (
+            <div style={{ margin: -24 }}>
+              <BilletCastingModel />
             </div>
           )}
 
