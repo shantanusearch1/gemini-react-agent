@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import BOFStaticChargeModel from './BOFStaticChargeModel.jsx'
 import BOFRealTimeTDModel from './BOFRealTimeTDModel.jsx'
-import SlabCastingModel from './Slabcastingmodel·jsx'
+import SlabCastingModel from './Slabcastingmodel.jsx'
 import BilletCastingModel from './BilletCastingModel.jsx'
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
