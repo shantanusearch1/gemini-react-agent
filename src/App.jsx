@@ -389,7 +389,7 @@ export default function App({ user, onLogout }) {
             if (item.isDivider) return (
               <div key={item.id} style={{ margin: '8px 12px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
                 {sidebarOpen && <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '6px 0 2px' }}>{item.label || 'BOF Models'}</div>}
-              </div>            )
+              </div>
             )
             const active = activeTab === item.id
             return (
