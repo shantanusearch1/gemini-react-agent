@@ -1,32 +1,55 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ANIMATED CANVAS — draws the entire plant in real time
-// ─────────────────────────────────────────────────────────────────────────────
-function CastingCanvas({ running, speed, tundishTemp, moldLevel, slabWidth, slabThickness, heatNo }) {
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
+
+// Heat map color: from liquid orange → hot red → warm → cool grey
+function heatColor(temp, min = 600, max = 1550) {
+  const t = clamp((temp - min) / (max - min), 0, 1)
+  if (t > 0.85) return `rgba(255,${Math.round(80 + (1 - t) * 120)},0,0.95)`
+  if (t > 0.65) return `rgba(${Math.round(180 + t * 75)},${Math.round(40 + t * 30)},0,0.92)`
+  if (t > 0.40) return `rgba(${Math.round(100 + t * 120)},${Math.round(30 + t * 40)},${Math.round(10 + t * 20)},0.88)`
+  if (t > 0.20) return `rgba(${Math.round(60 + t * 100)},${Math.round(70 + t * 30)},${Math.round(80 + t * 20)},0.85)`
+  return `rgba(${Math.round(55 + t * 60)},${Math.round(80 + t * 30)},${Math.round(90 + t * 30)},0.82)`
+}
+
+function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, slabWidth, slabThick, heatNo,
+  ladleLevel, setLadleLevel, tundishLevel, setTundishLevel, onSlabCut }) {
   const canvasRef = useRef(null)
   const rafRef    = useRef(null)
-  const st        = useRef({
-    frame: 0,
-    slabMove: 0,
-    rollAngle: 0,
+  const S = useRef({
+    t: 0, frame: 0,
+    // Physics
+    ladleKg: 250000,      // kg of steel in ladle (250 t)
+    tundishKg: 25000,     // kg in tundish (25 t capacity)
+    tundishMaxKg: 28000,
+    ladleFlowRate: 0,     // kg/s out of ladle
+    tundishFlowRate: 0,   // kg/s into mold
+    // Mold
     moldOsc: 0, moldDir: 1,
-    torchX: 260, torchActive: false, torchCooldown: 0,
-    sparks: [], drops: [], slabChunks: [],
-    slabsCut: 0,
+    moldTemp: 1510,       // copper temp
+    // Strand / slab
+    strandPixels: 0,      // accumulated pixels of strand cast
+    slabSegments: [],     // [{y, temp, solidFrac}] – vertical segments in strand
+    // Runout
+    runoutSlabs: [],      // [{x, len, temps:[], cutDone}]
+    slabBeingCast: null,  // current slab on runout being formed
+    // Torch
+    torchX: 0, torchOn: false, torchCD: 240, torchProgress: 0,
+    slabLen: 0,           // current slab length being built
+    targetSlabLen: 0,     // px length of slab to cut
+    // Particles
+    drops: [], sparks: [], steamPuffs: [],
+    // roll angle
+    rollAngle: 0,
+    // spray nozzle pulse
+    nozzlePulse: 0,
   })
 
-  // resize canvas to fill container
   useEffect(() => {
-    const el = canvasRef.current
-    if (!el) return
-    const resize = () => {
-      el.width  = el.parentElement.clientWidth
-      el.height = el.parentElement.clientHeight
-    }
-    resize()
-    window.addEventListener('resize', resize)
-    return () => window.removeEventListener('resize', resize)
+    const el = canvasRef.current; if (!el) return
+    const fit = () => { el.width = el.parentElement.clientWidth; el.height = el.parentElement.clientHeight }
+    fit(); window.addEventListener('resize', fit)
+    return () => window.removeEventListener('resize', fit)
   }, [])
 
   const draw = useCallback(() => {
@@ -34,452 +57,735 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, slabWidth, slab
     if (!canvas) { rafRef.current = requestAnimationFrame(draw); return }
     const ctx = canvas.getContext('2d')
     const W = canvas.width, H = canvas.height
-    const s = st.current
-    s.frame++
+    const sim = S.current
+    sim.t += 0.016; sim.frame++
 
-    // ── ADVANCE SIMULATION ─────────────────────────────────────────────────
+    // ── LAYOUT ─────────────────────────────────────────────────────────
+    const SCX      = W * 0.18   // strand centre X
+    const SW       = clamp(W * 0.045, 18, 36)  // strand half-width
+
+    const LADLE_Y0 = H * 0.01
+    const LADLE_H  = H * 0.13
+    const LADLE_W  = W * 0.15
+    const LADLE_Y1 = LADLE_Y0 + LADLE_H
+
+    const TUN_Y0   = LADLE_Y1 + H * 0.035
+    const TUN_H    = H * 0.07
+    const TUN_W    = W * 0.20
+    const TUN_Y1   = TUN_Y0 + TUN_H
+
+    const SEN_Y0   = TUN_Y1
+    const SEN_H    = H * 0.038
+    const SEN_Y1   = SEN_Y0 + SEN_H
+
+    const MOLD_Y0  = SEN_Y1 + sim.moldOsc * 0.4
+    const MOLD_H   = H * 0.10
+    const MOLD_Y1  = MOLD_Y0 + MOLD_H
+    const MWALL    = clamp(W * 0.025, 14, 24)
+
+    const STR_Y0   = MOLD_Y1
+    const STR_H    = H * 0.30
+    const STR_Y1   = STR_Y0 + STR_H
+
+    const BEND_R   = clamp(W * 0.10, 50, 110)
+    const BEND_CX  = SCX + BEND_R
+    const BEND_CY  = STR_Y1
+
+    const RUN_Y    = BEND_CY - SW
+    const RUN_X0   = BEND_CX
+    const RUN_X1   = W * 0.97
+    const RUN_H    = SW * 2
+
+    const TORCH_RAIL_Y = RUN_Y - H * 0.07
+
+    const PX_PER_M = STR_H / 8  // 1 m of strand = this many pixels
+
+    // ── PHYSICS TICK (every frame = 16ms) ──────────────────────────────
     if (running) {
-      s.slabMove  = (s.slabMove + speed * 0.15) % 55
-      s.rollAngle += speed * 0.09
+      const dt = 0.016 * speed  // physics scaled by cast speed
 
-      // mold oscillation ±3 mm
-      s.moldOsc += s.moldDir * 0.3
-      if (Math.abs(s.moldOsc) > 3) s.moldDir *= -1
+      // Mold oscillation: ±4mm at 1–2 Hz
+      sim.moldOsc += sim.moldDir * (0.5 * speed); if (Math.abs(sim.moldOsc) > 4) sim.moldDir *= -1
 
-      // torch logic
-      if (!s.torchActive) {
-        s.torchCooldown -= 1
-        if (s.torchCooldown <= 0) {
-          s.torchActive  = true
-          s.torchX       = W * 0.43
-          s.torchCooldown = 0
+      // Roll angle
+      sim.rollAngle += speed * 0.08
+
+      // Nozzle pulse
+      sim.nozzlePulse = (sim.nozzlePulse + 0.12 * speed) % (Math.PI * 2)
+
+      // ── LADLE → TUNDISH flow ──────────────────────────────────────────
+      sim.ladleFlowRate = sim.ladleKg > 500 ? clamp(speed * 220, 100, 400) : 0  // kg/s
+      const ladleOut    = sim.ladleFlowRate * dt
+      sim.ladleKg       = Math.max(0, sim.ladleKg - ladleOut)
+      setLadleLevel(sim.ladleKg / 250000)
+
+      // ── TUNDISH balance ───────────────────────────────────────────────
+      const tundishIn   = ladleOut
+      sim.tundishFlowRate = clamp(speed * 160, 80, 300)  // kg/s → mold
+      const tundishOut  = sim.tundishFlowRate * dt
+      sim.tundishKg     = clamp(sim.tundishKg + tundishIn - tundishOut, 0, sim.tundishMaxKg)
+      setTundishLevel(sim.tundishKg / sim.tundishMaxKg)
+
+      // ── MOLD LEVEL ────────────────────────────────────────────────────
+      // mold level oscillates ±2% around 85% driven by tundish flow vs casting speed
+      const moldTarget = 85 + (sim.tundishKg / sim.tundishMaxKg - 0.88) * 30
+      setMoldLevel(v => clamp(v + (moldTarget - v) * 0.04 + (Math.random() - 0.5) * 0.5, 60, 99))
+
+      // ── STRAND / SLAB SEGMENTS ────────────────────────────────────────
+      // Each frame push a new hot segment at top of strand
+      const pixelsThisFrame = speed * PX_PER_M * 0.016  // px this frame
+      sim.strandPixels += pixelsThisFrame
+
+      // Push new hot segment at mold exit
+      sim.slabSegments.unshift({ temp: tundishTemp - 5, solidFrac: 0.0, px: pixelsThisFrame })
+
+      // Advance / cool all segments
+      sim.slabSegments = sim.slabSegments.map((seg, idx) => {
+        const depth = idx * pixelsThisFrame  // approx distance below mold
+        const depthM = depth / PX_PER_M
+        // cooling profile: surface temp drops, solid fraction rises
+        const coolRate  = 0.3 + depth / STR_H * 1.8   // faster near bottom
+        const newTemp   = Math.max(800, seg.temp - coolRate * speed * 0.8)
+        const solidFrac = Math.min(1.0, seg.solidFrac + 0.003 * speed * (0.5 + depthM * 0.3))
+        return { ...seg, temp: newTemp, solidFrac }
+      })
+
+      // Remove segments that have moved past strand bottom
+      const maxSegs = Math.ceil(STR_H / pixelsThisFrame) + 20
+      if (sim.slabSegments.length > maxSegs) sim.slabSegments = sim.slabSegments.slice(0, maxSegs)
+
+      // ── RUNOUT SLAB HEAT MAP ──────────────────────────────────────────
+      // Build current slab being cast
+      if (!sim.slabBeingCast) {
+        sim.slabBeingCast = { x: RUN_X0 + 4, temps: [], len: 0 }
+        sim.targetSlabLen = clamp(speed * 40 + 120, 100, RUN_X1 - RUN_X0 - 60)
+      }
+      // Add a new pixel-column of slab exiting bend
+      const exitTemp = sim.slabSegments.length > 0 ? sim.slabSegments[sim.slabSegments.length - 1].temp : 900
+      sim.slabBeingCast.len += pixelsThisFrame
+      sim.slabBeingCast.temps.push(clamp(exitTemp, 700, 1300))
+
+      // Move existing runout slabs
+      sim.runoutSlabs = sim.runoutSlabs.map(sl => ({
+        ...sl,
+        x: sl.x + pixelsThisFrame * 2.5,
+        temps: sl.temps.map(t => Math.max(500, t - speed * 0.15))
+      })).filter(sl => sl.x < RUN_X1 + 400)
+
+      // ── TORCH cutting ─────────────────────────────────────────────────
+      if (!sim.torchOn) {
+        sim.torchCD -= 1
+        if (sim.slabBeingCast && sim.slabBeingCast.len >= sim.targetSlabLen) {
+          sim.torchOn = true
+          sim.torchX  = RUN_X0 + 10
+          // park current slab into runout list
+          sim.runoutSlabs.push({ ...sim.slabBeingCast, cutting: false })
+          sim.slabBeingCast = null
         }
       } else {
-        s.torchX += speed * 2.2
+        sim.torchX += speed * 3.2
         // sparks
-        for (let i = 0; i < 5; i++) s.sparks.push({
-          x: s.torchX, y: H * 0.80,
-          vx: (Math.random() - 0.5) * 5, vy: -Math.random() * 4 - 1,
+        for (let k = 0; k < 5; k++) sim.sparks.push({
+          x: sim.torchX, y: RUN_Y + RUN_H * 0.5,
+          vx: (Math.random() - 0.5) * 7, vy: -Math.random() * 6 - 1,
           life: 1, r: Math.random() * 2.5 + 0.5,
           col: Math.random() > 0.5 ? '#FF6D00' : '#FFD54F'
         })
-        if (s.torchX > W * 0.62) {
-          s.torchActive = false
-          s.torchCooldown = Math.round(180 / speed)
-          s.slabsCut++
-          s.slabChunks.push({ x: W * 0.65, y: H * 0.79, vx: 1.8 + speed * 0.5, life: 1 })
+        // steam puffs
+        if (sim.frame % 4 === 0) sim.steamPuffs.push({ x: sim.torchX, y: RUN_Y - 4, vx: (Math.random() - 0.3) * 1.5, vy: -1.5 - Math.random(), life: 1, r: 4 })
+
+        if (sim.torchX > RUN_X0 + sim.targetSlabLen) {
+          sim.torchOn = false; sim.torchCD = Math.round(200 / speed)
+          onSlabCut()
         }
       }
 
-      // spray drops — refill
-      if (s.drops.length < 80) {
-        const cx = W * 0.5        // strand centre X
-        const zones = [{ y: H * 0.52, n: 4 }, { y: H * 0.60, n: 4 }, { y: H * 0.68, n: 3 }]
-        zones.forEach(z => {
-          for (let i = 0; i < z.n; i++) {
-            s.drops.push({ x: cx - 28 + Math.random() * 4, y: z.y + Math.random() * 20,
-              vx: -1.8 - Math.random() * 1.5, vy: 0.8 + Math.random(), life: 1, r: 1.3 })
-            s.drops.push({ x: cx + 28 - Math.random() * 4, y: z.y + Math.random() * 20,
-              vx:  1.8 + Math.random() * 1.5, vy: 0.8 + Math.random(), life: 1, r: 1.3 })
+      // ── SPRAY DROPS ───────────────────────────────────────────────────
+      if (sim.drops.length < 140) {
+        const zoneYs = [STR_Y0 + STR_H * 0.08, STR_Y0 + STR_H * 0.32, STR_Y0 + STR_H * 0.58]
+        const pulse = Math.abs(Math.sin(sim.nozzlePulse))
+        zoneYs.forEach(zy => {
+          if (Math.random() < 0.4 * speed * pulse) {
+            sim.drops.push({ x: SCX - SW - 2, y: zy + Math.random() * 30, vx: -2.5 - Math.random() * 2.5, vy: 1.2 + Math.random(), life: 1 })
+            sim.drops.push({ x: SCX + SW + 2, y: zy + Math.random() * 30, vx: 2.5 + Math.random() * 2.5,  vy: 1.2 + Math.random(), life: 1 })
           }
         })
       }
+
+      // Mold cooling water
+      if (sim.frame % 3 === 0) {
+        sim.drops.push({ x: SCX - SW - MWALL, y: MOLD_Y0 + Math.random() * MOLD_H, vx: -1.5 - Math.random(), vy: 0.5 + Math.random() * 0.5, life: 0.7 })
+        sim.drops.push({ x: SCX + SW + MWALL, y: MOLD_Y0 + Math.random() * MOLD_H, vx:  1.5 + Math.random(), vy: 0.5 + Math.random() * 0.5, life: 0.7 })
+      }
     }
 
-    // advance particles
-    s.sparks = s.sparks.filter(p => p.life > 0).map(p => ({
-      ...p, x: p.x + p.vx, y: p.y + p.vy, vy: p.vy + 0.2, life: p.life - 0.04 }))
-    s.drops = s.drops.filter(p => p.life > 0).map(p => ({
-      ...p, x: p.x + p.vx, y: p.y + p.vy, life: p.life - 0.035 }))
-    s.slabChunks = s.slabChunks.filter(c => c.x < W + 200 && c.life > 0).map(c => ({
-      ...c, x: c.x + c.vx }))
+    // Update particles
+    sim.sparks     = sim.sparks.filter(p => p.life > 0).map(p => ({ ...p, x: p.x + p.vx, y: p.y + p.vy, vy: p.vy + 0.2, life: p.life - 0.04 }))
+    sim.drops      = sim.drops.filter(p => p.life > 0).map(p => ({ ...p, x: p.x + p.vx, y: p.y + p.vy, life: p.life - 0.032 }))
+    sim.steamPuffs = sim.steamPuffs.filter(p => p.life > 0).map(p => ({ ...p, x: p.x + p.vx, y: p.y + p.vy, r: p.r + 0.5, life: p.life - 0.025 }))
 
-    // ── BACKGROUND ─────────────────────────────────────────────────────────
-    ctx.fillStyle = '#07090f'
-    ctx.fillRect(0, 0, W, H)
+    // ─────────────────────────────────────────────────────────────────────
+    // DRAW
+    // ─────────────────────────────────────────────────────────────────────
+    ctx.fillStyle = '#06090f'; ctx.fillRect(0, 0, W, H)
     // grid
-    ctx.strokeStyle = 'rgba(255,255,255,0.025)'
-    ctx.lineWidth = 0.5
-    for (let x = 0; x < W; x += 35) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke() }
-    for (let y = 0; y < H; y += 35) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke() }
+    ctx.strokeStyle = 'rgba(255,255,255,0.015)'; ctx.lineWidth = 0.5
+    for (let gx = 0; gx < W; gx += 36) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke() }
+    for (let gy = 0; gy < H; gy += 36) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke() }
 
-    // ── LAYOUT REFERENCES (all % of W/H so it scales) ──
-    const CX = W * 0.50        // strand centre X
-    const SL = CX - 14         // strand left wall
-    const SR = CX + 14         // strand right wall
-    const SW = SR - SL         // strand inner width
+    const lbl = (txt, x, y, col = '#78909C', sz = 9, align = 'center') => {
+      ctx.fillStyle = col; ctx.font = `${sz}px monospace`; ctx.textAlign = align; ctx.fillText(txt, x, y)
+    }
 
-    const LADLE_Y    = H * 0.01
-    const LADLE_H    = H * 0.14
-    const TUNDISH_Y  = LADLE_Y + LADLE_H + H * 0.04
-    const TUNDISH_H  = H * 0.07
-    const SEN_Y      = TUNDISH_Y + TUNDISH_H
-    const SEN_H      = H * 0.04
-    const MOLD_Y     = SEN_Y + SEN_H + s.moldOsc * 0.3
-    const MOLD_H     = H * 0.11
-    const STRAND_Y   = MOLD_Y + MOLD_H
-    const STRAND_H   = H * 0.30
-    const BEND_Y     = STRAND_Y + STRAND_H
-    const RUNOUT_Y   = H * 0.79
-    const RUNOUT_H   = H * 0.07
-
-    // ── LADLE ──────────────────────────────────────────────────────────────
-    const LW = W * 0.22
-    const LX = CX - LW / 2
-    // stand legs
-    ctx.fillStyle = '#263238'
-    ctx.fillRect(LX - 6, LADLE_Y + LADLE_H * 0.1, 8, LADLE_H * 0.9)
-    ctx.fillRect(LX + LW - 2, LADLE_Y + LADLE_H * 0.1, 8, LADLE_H * 0.9)
-    // body
+    // ── LADLE ──────────────────────────────────────────────────────────
+    // Stand
+    ctx.fillStyle = '#1a2535'
+    ctx.fillRect(SCX - LADLE_W / 2 - 8, LADLE_Y0 + 5, 8, LADLE_H)
+    ctx.fillRect(SCX + LADLE_W / 2,     LADLE_Y0 + 5, 8, LADLE_H)
+    ctx.fillRect(SCX - LADLE_W / 2 - 10, LADLE_Y0, LADLE_W + 20, 6)
+    // Body (trapezoid)
     ctx.beginPath()
-    ctx.moveTo(LX, LADLE_Y + LADLE_H * 0.12)
-    ctx.lineTo(LX + LW, LADLE_Y + LADLE_H * 0.12)
-    ctx.lineTo(LX + LW - 6, LADLE_Y + LADLE_H)
-    ctx.lineTo(LX + 6, LADLE_Y + LADLE_H)
+    ctx.moveTo(SCX - LADLE_W / 2, LADLE_Y0 + 6)
+    ctx.lineTo(SCX + LADLE_W / 2, LADLE_Y0 + 6)
+    ctx.lineTo(SCX + LADLE_W / 2 - 10, LADLE_Y1)
+    ctx.lineTo(SCX - LADLE_W / 2 + 10, LADLE_Y1)
     ctx.closePath()
-    ctx.fillStyle = '#37474F'; ctx.fill()
-    ctx.strokeStyle = '#546E7A'; ctx.lineWidth = 1.2; ctx.stroke()
-    // steel inside ladle
-    const ladleInnerY = LADLE_Y + LADLE_H * 0.22
-    const ladleInnerH = LADLE_H * 0.68
-    const ladleGrd = ctx.createLinearGradient(0, ladleInnerY, 0, ladleInnerY + ladleInnerH)
-    ladleGrd.addColorStop(0, running ? 'rgba(255,120,0,0.92)' : 'rgba(80,100,110,0.5)')
-    ladleGrd.addColorStop(1, running ? 'rgba(180,30,0,0.7)'  : 'rgba(50,70,80,0.4)')
-    ctx.fillStyle = ladleGrd
+    ctx.fillStyle = '#263340'; ctx.fill()
+    ctx.strokeStyle = '#37474F'; ctx.lineWidth = 1.5; ctx.stroke()
+    // Lining (refractory)
     ctx.beginPath()
-    ctx.moveTo(LX + 6, ladleInnerY)
-    ctx.lineTo(LX + LW - 6, ladleInnerY)
-    ctx.lineTo(LX + LW - 10, ladleInnerY + ladleInnerH)
-    ctx.lineTo(LX + 10, ladleInnerY + ladleInnerH)
-    ctx.closePath(); ctx.fill()
-    if (running) {
-      const gw = ctx.createRadialGradient(CX, ladleInnerY, 5, CX, ladleInnerY, LW * 0.6)
-      gw.addColorStop(0, 'rgba(255,120,0,0.22)'); gw.addColorStop(1, 'rgba(255,80,0,0)')
-      ctx.fillStyle = gw; ctx.fillRect(LX - 10, LADLE_Y, LW + 20, LADLE_H + 10)
-    }
-    ctx.fillStyle = '#78909C'; ctx.font = `${Math.max(9, W * 0.012)}px monospace`
-    ctx.textAlign = 'center'
-    ctx.fillText('LADLE', CX, LADLE_Y + H * 0.008)
-    ctx.fillStyle = running ? '#FF8F00' : '#546E7A'; ctx.font = `${Math.max(8, W * 0.01)}px monospace`
-    ctx.fillText(`${tundishTemp + 18}°C`, CX, LADLE_Y + LADLE_H * 0.55)
-    ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.font = `${Math.max(7, W * 0.009)}px monospace`
-    ctx.fillText(heatNo, CX, LADLE_Y + LADLE_H * 0.75)
+    ctx.moveTo(SCX - LADLE_W / 2 + 4, LADLE_Y0 + 10)
+    ctx.lineTo(SCX + LADLE_W / 2 - 4, LADLE_Y0 + 10)
+    ctx.lineTo(SCX + LADLE_W / 2 - 14, LADLE_Y1 - 2)
+    ctx.lineTo(SCX - LADLE_W / 2 + 14, LADLE_Y1 - 2)
+    ctx.closePath()
+    ctx.fillStyle = '#1a2535'; ctx.fill()
 
-    // ── LADLE SHROUD ───────────────────────────────────────────────────────
-    ctx.fillStyle = '#37474F'
-    ctx.fillRect(CX - 5, LADLE_Y + LADLE_H, 10, H * 0.03)
-    if (running) {
-      const sg = ctx.createLinearGradient(0, LADLE_Y + LADLE_H, 0, TUNDISH_Y)
-      sg.addColorStop(0, 'rgba(255,100,0,0.9)'); sg.addColorStop(1, 'rgba(255,80,0,0.4)')
-      ctx.fillStyle = sg; ctx.fillRect(CX - 4, LADLE_Y + LADLE_H, 8, H * 0.03)
-    }
-
-    // ── TUNDISH ────────────────────────────────────────────────────────────
-    const TW = W * 0.28
-    const TX = CX - TW / 2
-    ctx.beginPath()
-    ctx.moveTo(TX, TUNDISH_Y); ctx.lineTo(TX + TW, TUNDISH_Y)
-    ctx.lineTo(TX + TW - 8, TUNDISH_Y + TUNDISH_H)
-    ctx.lineTo(TX + 8, TUNDISH_Y + TUNDISH_H); ctx.closePath()
-    ctx.fillStyle = '#2c3e50'; ctx.fill()
-    ctx.strokeStyle = '#455A64'; ctx.lineWidth = 1.2; ctx.stroke()
-    // tundish steel
-    const tundishInnerY = TUNDISH_Y + H * 0.008
-    const tg = ctx.createLinearGradient(0, tundishInnerY, 0, TUNDISH_Y + TUNDISH_H - H * 0.005)
-    tg.addColorStop(0, running ? 'rgba(255,140,0,0.9)' : 'rgba(69,90,100,0.7)')
-    tg.addColorStop(1, running ? 'rgba(200,60,0,0.75)' : 'rgba(55,71,79,0.5)')
-    ctx.fillStyle = tg
-    ctx.beginPath()
-    ctx.moveTo(TX + 8, tundishInnerY); ctx.lineTo(TX + TW - 8, tundishInnerY)
-    ctx.lineTo(TX + TW - 14, TUNDISH_Y + TUNDISH_H - H * 0.005)
-    ctx.lineTo(TX + 14, TUNDISH_Y + TUNDISH_H - H * 0.005); ctx.closePath(); ctx.fill()
-    if (running) {
-      const tgw = ctx.createRadialGradient(CX, tundishInnerY, 3, CX, tundishInnerY, TW * 0.5)
-      tgw.addColorStop(0, 'rgba(255,140,0,0.2)'); tgw.addColorStop(1, 'rgba(255,140,0,0)')
-      ctx.fillStyle = tgw; ctx.fillRect(TX, TUNDISH_Y, TW, TUNDISH_H + 10)
-    }
-    ctx.fillStyle = '#90A4AE'; ctx.font = `${Math.max(8, W * 0.011)}px monospace`
-    ctx.textAlign = 'center'
-    ctx.fillText('TUNDISH', CX, TUNDISH_Y - H * 0.004)
-    ctx.fillStyle = running ? '#FFB300' : '#546E7A'; ctx.font = `${Math.max(8, W * 0.01)}px monospace`
-    ctx.fillText(`${tundishTemp}°C`, CX, TUNDISH_Y + TUNDISH_H * 0.55)
-
-    // ── SEN ────────────────────────────────────────────────────────────────
-    ctx.fillStyle = '#37474F'
-    ctx.fillRect(CX - 5, SEN_Y, 10, SEN_H)
-    if (running) {
-      const sfg = ctx.createLinearGradient(0, SEN_Y, 0, SEN_Y + SEN_H)
-      sfg.addColorStop(0, 'rgba(255,100,0,0.85)'); sfg.addColorStop(1, 'rgba(255,60,0,0.5)')
-      ctx.fillStyle = sfg; ctx.fillRect(CX - 4, SEN_Y, 8, SEN_H)
-    }
-    ctx.strokeStyle = '#546E7A'; ctx.lineWidth = 0.8
-    ctx.strokeRect(CX - 5, SEN_Y, 10, SEN_H)
-    ctx.fillStyle = '#546E7A'; ctx.font = `${Math.max(7, W * 0.009)}px monospace`
-    ctx.textAlign = 'center'; ctx.fillText('SEN', CX, SEN_Y + SEN_H * 0.55)
-
-    // ── MOLD ───────────────────────────────────────────────────────────────
-    const MoldW = 22
-    // copper plates
-    const copperGrd = ctx.createLinearGradient(SL - MoldW, 0, SL, 0)
-    copperGrd.addColorStop(0, '#1a3a4a'); copperGrd.addColorStop(0.5, '#2a5060'); copperGrd.addColorStop(1, '#1a3a4a')
-    // Left plate
-    ctx.fillStyle = copperGrd; ctx.fillRect(SL - MoldW, MOLD_Y, MoldW, MOLD_H)
-    ctx.strokeStyle = '#29B6F6'; ctx.lineWidth = 0.5; ctx.strokeRect(SL - MoldW, MOLD_Y, MoldW, MOLD_H)
-    // Right plate
-    const copperGrd2 = ctx.createLinearGradient(SR, 0, SR + MoldW, 0)
-    copperGrd2.addColorStop(0, '#1a3a4a'); copperGrd2.addColorStop(0.5, '#2a5060'); copperGrd2.addColorStop(1, '#1a3a4a')
-    ctx.fillStyle = copperGrd2; ctx.fillRect(SR, MOLD_Y, MoldW, MOLD_H)
-    ctx.strokeStyle = '#29B6F6'; ctx.lineWidth = 0.5; ctx.strokeRect(SR, MOLD_Y, MoldW, MOLD_H)
-    // water channel lines
-    for (let i = 1; i < 5; i++) {
-      ctx.strokeStyle = `rgba(41,182,246,${0.15 + i * 0.05})`; ctx.lineWidth = 1.5
-      const cy2 = MOLD_Y + MOLD_H * i / 5
-      ctx.beginPath(); ctx.moveTo(SL - MoldW, cy2); ctx.lineTo(SL, cy2); ctx.stroke()
-      ctx.beginPath(); ctx.moveTo(SR, cy2); ctx.lineTo(SR + MoldW, cy2); ctx.stroke()
-    }
-    // liquid steel in mold
-    const moldSteelTop = MOLD_Y + H * 0.008
-    const moldSteelH   = MOLD_H * (moldLevel / 100) * 0.88
-    const msg = ctx.createLinearGradient(0, moldSteelTop, 0, moldSteelTop + moldSteelH)
-    msg.addColorStop(0, 'rgba(255,100,0,0.97)')
-    msg.addColorStop(0.5, 'rgba(210,55,0,0.88)')
-    msg.addColorStop(1, 'rgba(160,25,0,0.7)')
-    ctx.fillStyle = msg; ctx.fillRect(SL, moldSteelTop, SW, moldSteelH)
-    // meniscus shimmer
-    if (running) {
-      ctx.fillStyle = `rgba(255,200,60,${0.35 + 0.2 * Math.sin(s.frame * 0.18)})`
-      ctx.fillRect(SL, moldSteelTop, SW, 3)
-      const mgw = ctx.createRadialGradient(CX, moldSteelTop, 2, CX, moldSteelTop, 36)
-      mgw.addColorStop(0, 'rgba(255,120,0,0.2)'); mgw.addColorStop(1, 'rgba(255,80,0,0)')
-      ctx.fillStyle = mgw; ctx.fillRect(SL - 20, moldSteelTop - 10, SW + 40, 30)
-    }
-    // mold level line
-    ctx.strokeStyle = '#00E5FF'; ctx.lineWidth = 1; ctx.setLineDash([4, 3])
-    ctx.beginPath(); ctx.moveTo(SL - MoldW - 2, moldSteelTop); ctx.lineTo(SR + MoldW + 2, moldSteelTop); ctx.stroke()
-    ctx.setLineDash([])
-    // oscillation label
-    ctx.fillStyle = '#78909C'; ctx.font = `${Math.max(8, W * 0.01)}px monospace`; ctx.textAlign = 'center'
-    ctx.fillText('MOLD', CX, MOLD_Y - H * 0.005)
-    ctx.fillStyle = '#00BCD4'; ctx.font = `${Math.max(7, W * 0.009)}px monospace`
-    ctx.fillText(`OSC ${s.moldOsc > 0 ? '↑' : '↓'} ${Math.abs(s.moldOsc).toFixed(1)}mm`, CX, MOLD_Y + MOLD_H + H * 0.012)
-
-    // ── SOLIDIFYING STRAND ─────────────────────────────────────────────────
-    // shell walls
-    const shellGrd = ctx.createLinearGradient(SL - 14, 0, SR + 14, 0)
-    shellGrd.addColorStop(0, '#37474F'); shellGrd.addColorStop(0.4, '#546E7A')
-    shellGrd.addColorStop(0.6, '#607D8B'); shellGrd.addColorStop(1, '#37474F')
-    ctx.fillStyle = shellGrd
-    ctx.fillRect(SL - 14, STRAND_Y, 14, STRAND_H)  // left shell
-    ctx.fillRect(SR, STRAND_Y, 14, STRAND_H)         // right shell
-
-    // liquid core (shrinks with solidification)
-    if (running) {
-      const liquidH  = Math.min(STRAND_H * 0.68, speed * speed * 52)
-      const liquidGrd = ctx.createLinearGradient(0, STRAND_Y, 0, STRAND_Y + liquidH)
-      liquidGrd.addColorStop(0, 'rgba(255,80,0,0.92)')
-      liquidGrd.addColorStop(0.5, 'rgba(200,40,0,0.75)')
-      liquidGrd.addColorStop(1, 'rgba(140,15,0,0.2)')
-      ctx.fillStyle = liquidGrd; ctx.fillRect(SL, STRAND_Y, SW, liquidH)
-    }
-
-    // moving solidified slab texture
-    ctx.save()
-    ctx.beginPath(); ctx.rect(SL - 14, STRAND_Y, SW + 28, STRAND_H); ctx.clip()
-    for (let yy = -55 + s.slabMove; yy < STRAND_H + 55; yy += 22) {
-      ctx.strokeStyle = `rgba(80,120,140,${0.12 + 0.06 * Math.sin(yy)})`
-      ctx.lineWidth = 0.5
-      ctx.beginPath(); ctx.moveTo(SL - 14, STRAND_Y + yy); ctx.lineTo(SR + 14, STRAND_Y + yy); ctx.stroke()
-    }
-    ctx.restore()
-
-    // ── PINCH ROLLS ────────────────────────────────────────────────────────
-    const rollYs = [STRAND_Y + STRAND_H * 0.18, STRAND_Y + STRAND_H * 0.45,
-                    STRAND_Y + STRAND_H * 0.70, STRAND_Y + STRAND_H * 0.92]
-    rollYs.forEach(ry => {
-      [-1, 1].forEach(side => {
-        const rx = side < 0 ? SL - 10 : SR + 10
-        ctx.save(); ctx.translate(rx, ry)
-        ctx.rotate(side < 0 ? s.rollAngle : -s.rollAngle)
-        ctx.fillStyle = '#37474F'; ctx.strokeStyle = '#607D8B'; ctx.lineWidth = 1
-        ctx.beginPath(); ctx.ellipse(0, 0, 11, 5, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
-        ctx.fillStyle = '#546E7A'
-        ctx.beginPath(); ctx.ellipse(0, 0, 4, 2, 0, 0, Math.PI * 2); ctx.fill()
-        ctx.restore()
-      })
-    })
-
-    // ── SECONDARY COOLING SPRAYS ───────────────────────────────────────────
-    const zoneYs = [STRAND_Y + STRAND_H * 0.05, STRAND_Y + STRAND_H * 0.35, STRAND_Y + STRAND_H * 0.62]
-    zoneYs.forEach((zy, zi) => {
-      ctx.strokeStyle = 'rgba(41,182,246,0.2)'; ctx.lineWidth = 0.8; ctx.setLineDash([3, 3])
-      ctx.strokeRect(SL - 28, zy, SW + 56, STRAND_H * 0.28); ctx.setLineDash([])
-      ctx.fillStyle = '#0288D1'; ctx.font = `${Math.max(7, W * 0.009)}px monospace`
-      ctx.textAlign = 'left'; ctx.fillText(`Z${zi + 1}`, SL - 44, zy + 10)
-      // nozzle circles
+    // Steel level in ladle
+    const ladleInnerTop = LADLE_Y0 + 14
+    const ladleInnerH   = LADLE_H - 20
+    const ladleSteelH   = ladleInnerH * ladleLevel
+    const ladleSteelTop = ladleInnerTop + (ladleInnerH - ladleSteelH)
+    if (ladleSteelH > 2) {
+      // gradient from bright orange top to dark red bottom
+      const lg = ctx.createLinearGradient(0, ladleSteelTop, 0, ladleSteelTop + ladleSteelH)
+      lg.addColorStop(0, running ? `rgba(255,${120 + 40 * Math.sin(sim.t * 3)},0,0.95)` : 'rgba(80,100,115,0.6)')
+      lg.addColorStop(0.4, running ? 'rgba(230,60,0,0.88)' : 'rgba(60,80,95,0.5)')
+      lg.addColorStop(1, running ? 'rgba(160,20,0,0.72)' : 'rgba(40,60,75,0.4)')
+      ctx.fillStyle = lg
+      ctx.beginPath()
+      ctx.moveTo(SCX - LADLE_W / 2 + 14 + (ladleInnerH - ladleSteelH) * 0.1, ladleSteelTop)
+      ctx.lineTo(SCX + LADLE_W / 2 - 14 - (ladleInnerH - ladleSteelH) * 0.1, ladleSteelTop)
+      ctx.lineTo(SCX + LADLE_W / 2 - 14, ladleSteelTop + ladleSteelH)
+      ctx.lineTo(SCX - LADLE_W / 2 + 14, ladleSteelTop + ladleSteelH)
+      ctx.closePath(); ctx.fill()
+      // meniscus glow
       if (running) {
-        ctx.fillStyle = '#29B6F6'
-        ctx.beginPath(); ctx.arc(SL - 20, zy + 12, 2.5, 0, Math.PI * 2); ctx.fill()
-        ctx.beginPath(); ctx.arc(SR + 20, zy + 12, 2.5, 0, Math.PI * 2); ctx.fill()
-        ctx.beginPath(); ctx.arc(SL - 20, zy + 32, 2.5, 0, Math.PI * 2); ctx.fill()
-        ctx.beginPath(); ctx.arc(SR + 20, zy + 32, 2.5, 0, Math.PI * 2); ctx.fill()
+        ctx.fillStyle = `rgba(255,200,50,${0.3 + 0.2 * Math.sin(sim.t * 4)})`
+        ctx.fillRect(SCX - LADLE_W / 2 + 14, ladleSteelTop, LADLE_W - 28, 3)
+        const gw = ctx.createRadialGradient(SCX, ladleSteelTop, 2, SCX, ladleSteelTop, LADLE_W * 0.55)
+        gw.addColorStop(0, 'rgba(255,120,0,0.15)'); gw.addColorStop(1, 'rgba(255,80,0,0)')
+        ctx.fillStyle = gw; ctx.fillRect(SCX - LADLE_W, LADLE_Y0, LADLE_W * 2, LADLE_H * 0.7)
+      }
+    }
+    // level %
+    const ladlePct = (ladleLevel * 100).toFixed(0)
+    lbl('LADLE', SCX, LADLE_Y0 - 2, '#90A4AE', clamp(W * 0.011, 8, 12))
+    lbl(`${ladlePct}% • ${(ladleLevel * 250).toFixed(0)}t`, SCX, ladleSteelTop + ladleSteelH / 2 + 4, running ? '#FF8F00' : '#546E7A', clamp(W * 0.01, 7, 10))
+    // stopper rod
+    ctx.fillStyle = running && ladleLevel > 0.02 ? '#FF6D00' : '#546E7A'
+    ctx.fillRect(SCX - 3, LADLE_Y1 - LADLE_H * 0.35, 6, LADLE_H * 0.35)
+    // stopper tip
+    ctx.beginPath(); ctx.arc(SCX, LADLE_Y1, 5, 0, Math.PI * 2)
+    ctx.fillStyle = running && ladleLevel > 0.02 ? '#FF3D00' : '#455A64'; ctx.fill()
+
+    // ── LADLE → TUNDISH SHROUD ─────────────────────────────────────────
+    const shroudOpen = running && ladleLevel > 0.02
+    ctx.fillStyle = '#263238'; ctx.fillRect(SCX - 6, LADLE_Y1, 12, TUN_Y0 - LADLE_Y1)
+    if (shroudOpen) {
+      const flowWidth = clamp(6 * (sim.ladleFlowRate / 300), 2, 9)
+      const sg = ctx.createLinearGradient(0, LADLE_Y1, 0, TUN_Y0)
+      sg.addColorStop(0, 'rgba(255,120,0,0.95)'); sg.addColorStop(1, 'rgba(255,80,0,0.5)')
+      ctx.fillStyle = sg
+      ctx.fillRect(SCX - flowWidth / 2, LADLE_Y1, flowWidth, TUN_Y0 - LADLE_Y1)
+      // flow ripple
+      for (let fy = LADLE_Y1 + 4; fy < TUN_Y0; fy += 12) {
+        ctx.strokeStyle = `rgba(255,${100 + 50 * Math.sin(fy * 0.3 + sim.t * 8)},0,0.5)`
+        ctx.lineWidth = 1
+        ctx.beginPath(); ctx.arc(SCX, fy, 3, 0, Math.PI); ctx.stroke()
+      }
+    }
+    ctx.strokeStyle = '#37474F'; ctx.lineWidth = 0.8; ctx.strokeRect(SCX - 6, LADLE_Y1, 12, TUN_Y0 - LADLE_Y1)
+    lbl('SHROUD', SCX + 12, (LADLE_Y1 + TUN_Y0) / 2 + 3, '#455A64', clamp(W * 0.009, 7, 9), 'left')
+
+    // ── TUNDISH ────────────────────────────────────────────────────────
+    const tunW = TUN_W
+    ctx.beginPath()
+    ctx.moveTo(SCX - tunW / 2, TUN_Y0)
+    ctx.lineTo(SCX + tunW / 2, TUN_Y0)
+    ctx.lineTo(SCX + tunW / 2 - 12, TUN_Y1)
+    ctx.lineTo(SCX - tunW / 2 + 12, TUN_Y1)
+    ctx.closePath()
+    ctx.fillStyle = '#1e2d3d'; ctx.fill(); ctx.strokeStyle = '#2c4055'; ctx.lineWidth = 1.5; ctx.stroke()
+    // refractory lining
+    ctx.beginPath()
+    ctx.moveTo(SCX - tunW / 2 + 6, TUN_Y0 + 4)
+    ctx.lineTo(SCX + tunW / 2 - 6, TUN_Y0 + 4)
+    ctx.lineTo(SCX + tunW / 2 - 16, TUN_Y1 - 3)
+    ctx.lineTo(SCX - tunW / 2 + 16, TUN_Y1 - 3)
+    ctx.closePath(); ctx.fillStyle = '#141e2c'; ctx.fill()
+    // steel in tundish
+    const tunSteelH = (TUN_H - 10) * tundishLevel
+    const tunSteelTop = TUN_Y1 - 6 - tunSteelH
+    if (tunSteelH > 2) {
+      const tg = ctx.createLinearGradient(0, tunSteelTop, 0, TUN_Y1 - 6)
+      tg.addColorStop(0, running ? `rgba(255,${110 + 30 * Math.sin(sim.t * 2.5)},0,0.93)` : 'rgba(60,80,95,0.6)')
+      tg.addColorStop(1, running ? 'rgba(190,45,0,0.78)' : 'rgba(40,60,78,0.45)')
+      ctx.fillStyle = tg
+      ctx.beginPath()
+      ctx.moveTo(SCX - tunW / 2 + 16 + (1 - tundishLevel) * 8, tunSteelTop)
+      ctx.lineTo(SCX + tunW / 2 - 16 - (1 - tundishLevel) * 8, tunSteelTop)
+      ctx.lineTo(SCX + tunW / 2 - 16, TUN_Y1 - 6)
+      ctx.lineTo(SCX - tunW / 2 + 16, TUN_Y1 - 6)
+      ctx.closePath(); ctx.fill()
+      if (running) {
+        ctx.fillStyle = `rgba(255,180,40,${0.25 + 0.15 * Math.sin(sim.t * 3.5)})`
+        const tw = tunW - 32 - (1 - tundishLevel) * 16
+        ctx.fillRect(SCX - tw / 2, tunSteelTop, tw, 3)
+        const tgw = ctx.createRadialGradient(SCX, tunSteelTop, 2, SCX, tunSteelTop, tunW * 0.5)
+        tgw.addColorStop(0, 'rgba(255,140,0,0.12)'); tgw.addColorStop(1, 'rgba(255,140,0,0)')
+        ctx.fillStyle = tgw; ctx.fillRect(SCX - tunW, TUN_Y0, tunW * 2, TUN_H)
+      }
+    }
+    lbl('TUNDISH', SCX, TUN_Y0 - 3, '#90A4AE', clamp(W * 0.011, 8, 12))
+    lbl(`${(tundishLevel * 100).toFixed(0)}% • ${(tundishLevel * 28).toFixed(1)}t`, SCX, TUN_Y0 + TUN_H * 0.48, running ? '#FFB300' : '#546E7A', clamp(W * 0.01, 7, 10))
+    lbl(`${tundishTemp}°C  SH:${tundishTemp - 1537}°C`, SCX, TUN_Y1 - 6, running ? '#FF7043' : '#455A64', clamp(W * 0.009, 7, 9))
+
+    // ── SEN ───────────────────────────────────────────────────────────
+    ctx.fillStyle = '#263238'; ctx.fillRect(SCX - 7, SEN_Y0, 14, SEN_H)
+    if (running && tundishLevel > 0.08) {
+      const fw = clamp(8 * (sim.tundishFlowRate / 200), 3, 10)
+      const sfg = ctx.createLinearGradient(0, SEN_Y0, 0, SEN_Y1)
+      sfg.addColorStop(0, 'rgba(255,110,0,0.92)'); sfg.addColorStop(1, 'rgba(255,70,0,0.5)')
+      ctx.fillStyle = sfg; ctx.fillRect(SCX - fw / 2, SEN_Y0, fw, SEN_H)
+    }
+    ctx.strokeStyle = '#37474F'; ctx.lineWidth = 0.8; ctx.strokeRect(SCX - 7, SEN_Y0, 14, SEN_H)
+    lbl('SEN', SCX + 12, SEN_Y0 + SEN_H * 0.6, '#455A64', clamp(W * 0.009, 7, 9), 'left')
+
+    // ── MOLD ──────────────────────────────────────────────────────────
+    const MY0 = MOLD_Y0, MY1 = MOLD_Y1
+    // Water-cooled copper plates
+    const copperG = ctx.createLinearGradient(0, MY0, 0, MY1)
+    copperG.addColorStop(0, '#1a3a4a'); copperG.addColorStop(0.5, '#1d4560'); copperG.addColorStop(1, '#1a3a4a')
+    ctx.fillStyle = copperG
+    ctx.fillRect(SCX - SW - MWALL, MY0, MWALL, MOLD_H)
+    ctx.fillRect(SCX + SW, MY0, MWALL, MOLD_H)
+    // Water channel marks on copper
+    for (let ci = 0; ci < 6; ci++) {
+      const cy = MY0 + ci * MOLD_H / 6
+      ctx.fillStyle = `rgba(41,182,246,${0.08 + ci * 0.025})`
+      ctx.fillRect(SCX - SW - MWALL, cy, MWALL, MOLD_H / 6 - 1)
+      ctx.fillRect(SCX + SW,         cy, MWALL, MOLD_H / 6 - 1)
+    }
+    ctx.strokeStyle = '#29B6F6'; ctx.lineWidth = 0.7
+    ctx.strokeRect(SCX - SW - MWALL, MY0, MWALL, MOLD_H)
+    ctx.strokeRect(SCX + SW, MY0, MWALL, MOLD_H)
+    // Copper temp badge
+    const moldCuTemp = clamp(1480 + speed * 15, 1485, 1530)
+    lbl(`Cu: ${moldCuTemp.toFixed(0)}°C`, SCX - SW - MWALL - 2, MY0 + MOLD_H * 0.35, '#29B6F6', clamp(W * 0.009, 7, 9), 'right')
+    lbl('WATER', SCX - SW - MWALL - 2, MY0 + MOLD_H * 0.55, '#0288D1', clamp(W * 0.009, 7, 9), 'right')
+    lbl(`COOLING`, SCX - SW - MWALL - 2, MY0 + MOLD_H * 0.72, '#0288D1', clamp(W * 0.009, 7, 9), 'right')
+
+    // Steel inside mold
+    const moldSteelH = MOLD_H * 0.92 * (moldLevel / 100)
+    const moldSteelTop = MY0 + 4
+    const moldSteelBot = moldSteelTop + moldSteelH
+    const msg = ctx.createLinearGradient(0, moldSteelTop, 0, moldSteelBot)
+    msg.addColorStop(0, `rgba(255,${100 + 40 * Math.sin(sim.t * 4)},0,0.97)`)
+    msg.addColorStop(0.4, 'rgba(220,55,0,0.9)')
+    msg.addColorStop(1, 'rgba(165,25,0,0.75)')
+    ctx.fillStyle = msg; ctx.fillRect(SCX - SW, moldSteelTop, SW * 2, moldSteelH)
+    // Meniscus shimmer
+    if (running) {
+      ctx.fillStyle = `rgba(255,220,60,${0.4 + 0.25 * Math.sin(sim.t * 5)})`
+      ctx.fillRect(SCX - SW, moldSteelTop, SW * 2, 3)
+      const mgw = ctx.createRadialGradient(SCX, moldSteelTop, 1, SCX, moldSteelTop, SW * 3)
+      mgw.addColorStop(0, 'rgba(255,120,0,0.2)'); mgw.addColorStop(1, 'rgba(255,80,0,0)')
+      ctx.fillStyle = mgw; ctx.fillRect(SCX - SW * 4, MY0 - 8, SW * 8, MOLD_H * 0.5)
+    }
+    // Mold level indicator
+    ctx.strokeStyle = '#00E5FF'; ctx.lineWidth = 1.2; ctx.setLineDash([5, 3])
+    ctx.beginPath(); ctx.moveTo(SCX - SW - MWALL, moldSteelTop); ctx.lineTo(SCX + SW + MWALL + 50, moldSteelTop); ctx.stroke()
+    ctx.setLineDash([])
+    lbl(`${moldLevel.toFixed(1)}%`, SCX + SW + MWALL + 52, moldSteelTop + 4, '#00E5FF', clamp(W * 0.009, 7, 10), 'left')
+    // Oscillation arrows
+    if (running) {
+      const oscDir = sim.moldDir > 0 ? '↑' : '↓'
+      ctx.strokeStyle = `rgba(0,188,212,${0.5 + 0.5 * Math.abs(Math.sin(sim.t * 8))})`; ctx.lineWidth = 2
+      ctx.beginPath(); ctx.moveTo(SCX - SW - MWALL - 6, MY0); ctx.lineTo(SCX - SW - MWALL - 6, MY1); ctx.stroke()
+      lbl(`OSC ${oscDir}`, SCX - SW - MWALL - 8, MY0 - 4, '#00BCD4', clamp(W * 0.009, 7, 9), 'right')
+      lbl(`${Math.abs(sim.moldOsc).toFixed(1)}mm`, SCX - SW - MWALL - 8, MY1 + 10, '#00BCD4', clamp(W * 0.009, 7, 9), 'right')
+    }
+    lbl('MOLD', SCX + SW + MWALL + 52, MY0 + MOLD_H * 0.5, '#78909C', clamp(W * 0.011, 8, 11), 'left')
+
+    // ── SOLIDIFYING STRAND (VERTICAL) ─────────────────────────────────
+    // Draw each segment with its heat color
+    const STR_Y0_DRAW = STR_Y0
+    const segH = STR_H / Math.max(sim.slabSegments.length, 1)
+    const visSegH = clamp(segH, 1, 8)
+    // Shell walls
+    ctx.fillStyle = '#2c3e50'
+    ctx.fillRect(SCX - SW - 14, STR_Y0, 14, STR_H)
+    ctx.fillRect(SCX + SW, STR_Y0, 14, STR_H)
+    // Shell highlight
+    ctx.fillStyle = 'rgba(84,110,122,0.4)'
+    ctx.fillRect(SCX - SW - 12, STR_Y0, 4, STR_H)
+    ctx.fillRect(SCX + SW + 10, STR_Y0, 4, STR_H)
+
+    // Heat map of strand cross-section
+    ctx.save()
+    ctx.beginPath(); ctx.rect(SCX - SW - 14, STR_Y0, SW * 2 + 28, STR_H); ctx.clip()
+    sim.slabSegments.forEach((seg, idx) => {
+      const sy = STR_Y0 + idx * visSegH
+      if (sy > STR_Y0 + STR_H) return
+      const col = heatColor(seg.temp)
+      // Liquid core width narrows as solidification increases
+      const coreW = SW * 2 * (1 - seg.solidFrac * 0.92)
+      // outer shell (solidified)
+      ctx.fillStyle = heatColor(seg.temp * 0.65)
+      ctx.fillRect(SCX - SW, sy, SW * 2, visSegH + 1)
+      // liquid/mushy core
+      if (coreW > 1) {
+        ctx.fillStyle = col
+        ctx.fillRect(SCX - coreW / 2, sy, coreW, visSegH + 1)
       }
     })
-    // water droplets
+    // Moving grain lines
     if (running) {
-      s.drops.forEach(d => {
-        ctx.globalAlpha = d.life * 0.75
-        ctx.fillStyle = '#4FC3F7'
-        ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2); ctx.fill()
-      })
-      ctx.globalAlpha = 1
-    }
-
-    // ── STRAND BEND ────────────────────────────────────────────────────────
-    const BEND_R = W * 0.065
-    ctx.save()
-    ctx.strokeStyle = '#3d5a6a'; ctx.lineWidth = SW + 28; ctx.lineCap = 'round'
-    ctx.beginPath(); ctx.arc(CX + BEND_R, BEND_Y, BEND_R, -Math.PI, -Math.PI * 0.5, false)
-    ctx.stroke()
-    if (running) {
-      ctx.strokeStyle = 'rgba(180,50,0,0.4)'; ctx.lineWidth = SW
-      ctx.beginPath(); ctx.arc(CX + BEND_R, BEND_Y, BEND_R, -Math.PI, -Math.PI * 0.5, false)
-      ctx.stroke()
+      const offset = (sim.t * speed * 18) % 22
+      for (let ly = STR_Y0 - offset; ly < STR_Y0 + STR_H; ly += 22) {
+        ctx.strokeStyle = 'rgba(60,90,120,0.07)'; ctx.lineWidth = 0.5
+        ctx.beginPath(); ctx.moveTo(SCX - SW - 14, ly); ctx.lineTo(SCX + SW + 14, ly); ctx.stroke()
+      }
     }
     ctx.restore()
 
-    // ── HORIZONTAL RUNOUT TABLE ────────────────────────────────────────────
-    const ROX  = CX + BEND_R - 2     // runout start X
-    const ROW  = W - ROX - 10         // runout width
-    ctx.fillStyle = '#111d2c'
-    ctx.fillRect(ROX, RUNOUT_Y, ROW, RUNOUT_H)
-    ctx.strokeStyle = '#1e3348'; ctx.lineWidth = 1; ctx.strokeRect(ROX, RUNOUT_Y, ROW, RUNOUT_H)
-    // horizontal rollers
-    for (let rx = ROX + 18; rx < ROX + ROW - 10; rx += 24) {
-      ctx.save(); ctx.translate(rx, RUNOUT_Y + RUNOUT_H * 0.45)
-      ctx.rotate(running ? s.rollAngle * 0.7 : 0)
-      ctx.fillStyle = '#2c4055'; ctx.strokeStyle = '#3d5a73'; ctx.lineWidth = 0.8
-      ctx.beginPath(); ctx.ellipse(0, 0, 10, 4, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
-      ctx.fillStyle = '#37506a'
-      ctx.beginPath(); ctx.ellipse(0, 0, 3, 1.5, 0, 0, Math.PI * 2); ctx.fill()
-      ctx.restore()
+    // Shell wall border
+    ctx.strokeStyle = '#1e2d3d'; ctx.lineWidth = 1
+    ctx.strokeRect(SCX - SW - 14, STR_Y0, 14, STR_H)
+    ctx.strokeRect(SCX + SW, STR_Y0, 14, STR_H)
+
+    // Pool depth arrow
+    if (running && sim.slabSegments.length > 5) {
+      const solidIdx = sim.slabSegments.findIndex(s => s.solidFrac > 0.98)
+      const poolDepthPx = solidIdx > 0 ? solidIdx * visSegH : STR_H * 0.7
+      const poolDepthM  = poolDepthPx / PX_PER_M
+      ctx.strokeStyle = 'rgba(155,93,229,0.55)'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3])
+      ctx.beginPath(); ctx.moveTo(SCX + SW + 18, STR_Y0); ctx.lineTo(SCX + SW + 18, STR_Y0 + Math.min(poolDepthPx, STR_H)); ctx.stroke()
+      ctx.setLineDash([])
+      lbl(`Pool: ${poolDepthM.toFixed(1)}m`, SCX + SW + 22, STR_Y0 + Math.min(poolDepthPx, STR_H) / 2, '#9b5de5', clamp(W * 0.009, 7, 9), 'left')
     }
-    // slab on runout (moving)
-    if (running) {
-      const sROX = ROX + 10 + s.slabMove * 2.5
-      const sRW  = Math.min(ROW * 0.45, 120)
-      if (sROX + sRW < ROX + ROW) {
-        const srg = ctx.createLinearGradient(sROX, RUNOUT_Y, sROX, RUNOUT_Y + RUNOUT_H)
-        srg.addColorStop(0, '#E64A19'); srg.addColorStop(0.35, '#BF360C'); srg.addColorStop(1, '#607D8B')
-        ctx.fillStyle = srg; ctx.fillRect(sROX, RUNOUT_Y + 2, sRW, RUNOUT_H - 4)
-        ctx.strokeStyle = '#455A64'; ctx.lineWidth = 0.5; ctx.strokeRect(sROX, RUNOUT_Y + 2, sRW, RUNOUT_H - 4)
-        // heat glow on slab
-        ctx.fillStyle = `rgba(255,80,0,${0.12 + 0.08 * Math.sin(s.frame * 0.1)})`
-        ctx.fillRect(sROX, RUNOUT_Y + 2, sRW * 0.3, RUNOUT_H - 4)
+
+    // ── SECONDARY COOLING ZONES ────────────────────────────────────────
+    const ZONES = [
+      { y0: STR_Y0 + STR_H * 0.03, h: STR_H * 0.27, n: 'ZONE 1', flow: speed * 78 },
+      { y0: STR_Y0 + STR_H * 0.32, h: STR_H * 0.27, n: 'ZONE 2', flow: speed * 56 },
+      { y0: STR_Y0 + STR_H * 0.61, h: STR_H * 0.27, n: 'ZONE 3', flow: speed * 40 },
+    ]
+    ZONES.forEach((z, zi) => {
+      ctx.strokeStyle = `rgba(41,182,246,${0.18 + zi * 0.03})`; ctx.lineWidth = 0.8; ctx.setLineDash([3, 4])
+      ctx.strokeRect(SCX - SW - 24, z.y0, SW * 2 + 48, z.h); ctx.setLineDash([])
+      lbl(z.n, SCX - SW - 26, z.y0 + 10, '#0288D1', clamp(W * 0.009, 7, 9), 'right')
+      if (running) {
+        lbl(`${z.flow.toFixed(0)}L/m`, SCX - SW - 26, z.y0 + 22, '#4FC3F7', clamp(W * 0.009, 7, 9), 'right')
+        // Nozzle boxes with pulsing spray
+        const pulse = 0.5 + 0.5 * Math.sin(sim.nozzlePulse + zi * Math.PI * 0.6)
+        const nozzleYs = [z.y0 + z.h * 0.25, z.y0 + z.h * 0.6]
+        nozzleYs.forEach(ny => {
+          ;[-1, 1].forEach(side => {
+            const nx = side < 0 ? SCX - SW - 14 : SCX + SW + 14
+            // nozzle body
+            ctx.fillStyle = '#1565C0'
+            ctx.fillRect(nx - 4, ny - 4, 8, 8)
+            ctx.strokeStyle = '#29B6F6'; ctx.lineWidth = 0.8; ctx.strokeRect(nx - 4, ny - 4, 8, 8)
+            // spray cone
+            const sprayLen = 14 + 8 * pulse
+            for (let ai = -3; ai <= 3; ai++) {
+              const angle = side * Math.PI / 2 + ai * 0.2
+              const ex = nx + Math.cos(angle) * sprayLen * side
+              const ey = ny + Math.sin(angle) * sprayLen * 0.4
+              const alpha = (0.3 + 0.5 * pulse) * (1 - Math.abs(ai) / 4)
+              ctx.strokeStyle = `rgba(41,182,246,${alpha})`; ctx.lineWidth = 1
+              ctx.beginPath(); ctx.moveTo(nx, ny); ctx.lineTo(ex, ey); ctx.stroke()
+            }
+          })
+        })
       }
-    }
+    })
 
-    // ── TORCH CUTTING MACHINE ──────────────────────────────────────────────
-    const TORCH_TRACK_Y = RUNOUT_Y - H * 0.04
-    // torch rail
-    ctx.fillStyle = '#111d2c'; ctx.fillRect(ROX, TORCH_TRACK_Y, ROW * 0.55, H * 0.025)
-    ctx.fillStyle = '#1a2d40'; ctx.fillRect(ROX, TORCH_TRACK_Y + H * 0.007, ROW * 0.55, H * 0.003)
-    ctx.fillRect(ROX, TORCH_TRACK_Y + H * 0.015, ROW * 0.55, H * 0.003)
-    ctx.fillStyle = '#2c4055'; ctx.font = `${Math.max(7, W * 0.009)}px monospace`
-    ctx.textAlign = 'left'; ctx.fillText('TORCH CUTTING', ROX + 2, TORCH_TRACK_Y - H * 0.005)
-
-    if (s.torchActive) {
-      const tx = s.torchX
-      // carriage body
-      ctx.fillStyle = '#1e3348'; ctx.strokeStyle = '#2c4a65'; ctx.lineWidth = 1
-      ctx.fillRect(tx - 18, TORCH_TRACK_Y - H * 0.01, 36, H * 0.045)
-      ctx.strokeRect(tx - 18, TORCH_TRACK_Y - H * 0.01, 36, H * 0.045)
-      // torch arm
-      ctx.fillStyle = '#2c4a65'; ctx.fillRect(tx - 3, TORCH_TRACK_Y + H * 0.03, 6, H * 0.03)
-      // oxy-acetylene hoses
-      ctx.strokeStyle = '#E53935'; ctx.lineWidth = 1.5
-      ctx.beginPath(); ctx.moveTo(tx + 5, TORCH_TRACK_Y); ctx.bezierCurveTo(tx + 30, TORCH_TRACK_Y - 10, ROX + ROW * 0.55, TORCH_TRACK_Y - 12, ROX + ROW * 0.55, TORCH_TRACK_Y); ctx.stroke()
-      ctx.strokeStyle = '#1565C0'
-      ctx.beginPath(); ctx.moveTo(tx - 5, TORCH_TRACK_Y); ctx.bezierCurveTo(tx - 30, TORCH_TRACK_Y - 8, ROX + ROW * 0.55, TORCH_TRACK_Y - 8, ROX + ROW * 0.55, TORCH_TRACK_Y); ctx.stroke()
-      // torch tip
-      ctx.fillStyle = '#FFB300'
-      ctx.beginPath(); ctx.arc(tx, RUNOUT_Y - 2, 4, 0, Math.PI * 2); ctx.fill()
-      // FLAME
-      const flameR = 10 + 3 * Math.sin(s.frame * 0.4)
-      const fg = ctx.createRadialGradient(tx, RUNOUT_Y + 2, 0, tx, RUNOUT_Y + 2, flameR)
-      fg.addColorStop(0, 'rgba(255,255,255,0.95)'); fg.addColorStop(0.25, 'rgba(255,240,0,0.9)')
-      fg.addColorStop(0.6, 'rgba(255,100,0,0.7)'); fg.addColorStop(1, 'rgba(255,0,0,0)')
-      ctx.fillStyle = fg; ctx.beginPath(); ctx.arc(tx, RUNOUT_Y + 2, flameR, 0, Math.PI * 2); ctx.fill()
-      // cut line on slab
-      ctx.strokeStyle = `rgba(255,120,0,${0.6 + 0.4 * Math.sin(s.frame * 0.5)})`
-      ctx.lineWidth = 2; ctx.setLineDash([])
-      ctx.beginPath(); ctx.moveTo(tx, RUNOUT_Y); ctx.lineTo(tx, RUNOUT_Y + RUNOUT_H - 4); ctx.stroke()
-      // label
-      ctx.fillStyle = '#FFD54F'; ctx.font = `bold ${Math.max(8, W * 0.01)}px monospace`
-      ctx.textAlign = 'center'; ctx.fillText('● CUTTING', tx, TORCH_TRACK_Y - H * 0.015)
-    } else {
-      // parked torch
-      const px = ROX + 12
-      ctx.fillStyle = '#0d1822'; ctx.strokeStyle = '#1e3348'; ctx.lineWidth = 1
-      ctx.fillRect(px, TORCH_TRACK_Y - H * 0.01, 36, H * 0.045)
-      ctx.strokeRect(px, TORCH_TRACK_Y - H * 0.01, 36, H * 0.045)
-      ctx.fillStyle = '#2c4a65'; ctx.font = `${Math.max(7, W * 0.009)}px monospace`
-      ctx.textAlign = 'center'; ctx.fillText('STANDBY', px + 18, TORCH_TRACK_Y + H * 0.025)
-    }
-
-    // ── SPARKS ─────────────────────────────────────────────────────────────
-    s.sparks.forEach(sp => {
-      ctx.globalAlpha = sp.life
-      ctx.fillStyle = sp.col
-      ctx.beginPath(); ctx.arc(sp.x, sp.y, sp.r, 0, Math.PI * 2); ctx.fill()
-      ctx.globalAlpha = sp.life * 0.3
-      ctx.fillStyle = '#FF8F00'
-      ctx.beginPath(); ctx.arc(sp.x - sp.vx * 0.5, sp.y - sp.vy * 0.5, sp.r * 0.4, 0, Math.PI * 2); ctx.fill()
+    // Spray drops
+    sim.drops.forEach(d => {
+      ctx.globalAlpha = d.life * 0.72
+      ctx.fillStyle = d.life < 0.4 ? '#29B6F6' : '#4FC3F7'
+      ctx.beginPath(); ctx.arc(d.x, d.y, 1.5, 0, Math.PI * 2); ctx.fill()
     })
     ctx.globalAlpha = 1
 
-    // ── CUT SLABS MOVING AWAY ──────────────────────────────────────────────
-    s.slabChunks.forEach(c => {
-      const cg = ctx.createLinearGradient(c.x, 0, c.x + 80, 0)
-      cg.addColorStop(0, '#546E7A'); cg.addColorStop(0.5, '#607D8B'); cg.addColorStop(1, '#455A64')
-      ctx.fillStyle = cg; ctx.fillRect(c.x, RUNOUT_Y + 2, 80, RUNOUT_H - 4)
-      ctx.strokeStyle = '#37474F'; ctx.lineWidth = 0.5; ctx.strokeRect(c.x, RUNOUT_Y + 2, 80, RUNOUT_H - 4)
-      ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.font = `${Math.max(7, W * 0.009)}px monospace`
-      ctx.textAlign = 'center'; ctx.fillText(`#${s.slabsCut}`, c.x + 40, RUNOUT_Y + RUNOUT_H * 0.6)
+    // ── PINCH ROLLS ────────────────────────────────────────────────────
+    const ROLL_YS = [STR_Y0 + STR_H * 0.14, STR_Y0 + STR_H * 0.38, STR_Y0 + STR_H * 0.62, STR_Y0 + STR_H * 0.87]
+    ROLL_YS.forEach(ry => {
+      ;[-1, 1].forEach(side => {
+        const rx = side < 0 ? SCX - SW - 8 : SCX + SW + 8
+        ctx.save(); ctx.translate(rx, ry)
+        ctx.rotate(side < 0 ? sim.rollAngle : -sim.rollAngle)
+        ctx.fillStyle = running ? '#2c3e50' : '#1a2535'
+        ctx.strokeStyle = '#546E7A'; ctx.lineWidth = 1
+        ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+        ctx.fillStyle = '#37474F'; ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI * 2); ctx.fill()
+        if (running) {
+          ctx.strokeStyle = 'rgba(84,110,122,0.55)'; ctx.lineWidth = 1
+          ;[0, 1, 2].forEach(k => {
+            const a = k * Math.PI * 2 / 3
+            ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * 6, Math.sin(a) * 6); ctx.stroke()
+          })
+        }
+        ctx.restore()
+        // bearing housing
+        ctx.fillStyle = '#1a2535'; ctx.fillRect(side < 0 ? SCX - SW - 18 : SCX + SW + 10, ry - 3, 10, 6)
+      })
+      lbl('ROLL', SCX + SW + 24, ry + 3, 'rgba(84,110,122,0.4)', clamp(W * 0.008, 6, 8), 'left')
     })
 
-    // ── STATUS OVERLAY (top right mini panel) ─────────────────────────────
-    const OX = W - W * 0.19, OY = H * 0.02, OW = W * 0.18, ROWH = H * 0.044
-    ctx.fillStyle = 'rgba(4,8,16,0.78)'; ctx.fillRect(OX - 4, OY, OW + 8, ROWH * 10 + 6)
-    ctx.strokeStyle = '#1e3348'; ctx.lineWidth = 0.8; ctx.strokeRect(OX - 4, OY, OW + 8, ROWH * 10 + 6)
+    // ── STRAND BEND ────────────────────────────────────────────────────
+    ctx.save()
+    ctx.strokeStyle = '#2c3e50'; ctx.lineWidth = SW * 2 + 28; ctx.lineCap = 'butt'
+    ctx.beginPath(); ctx.arc(BEND_CX, BEND_CY, BEND_R, -Math.PI, -Math.PI * 0.5, false); ctx.stroke()
+    // heat inside bend
+    if (running && sim.slabSegments.length > 0) {
+      const bendTemp = sim.slabSegments[sim.slabSegments.length - 1]?.temp || 900
+      ctx.strokeStyle = heatColor(bendTemp, 700, 1200)
+      ctx.lineWidth = SW * 1.2; ctx.globalAlpha = 0.6
+      ctx.beginPath(); ctx.arc(BEND_CX, BEND_CY, BEND_R, -Math.PI, -Math.PI * 0.5, false); ctx.stroke()
+    }
+    ctx.globalAlpha = 1
+    // bend outline
+    ctx.strokeStyle = '#1a2535'; ctx.lineWidth = 1.2
+    ctx.beginPath(); ctx.arc(BEND_CX, BEND_CY, BEND_R - SW - 14, -Math.PI, -Math.PI * 0.5, false); ctx.stroke()
+    ctx.beginPath(); ctx.arc(BEND_CX, BEND_CY, BEND_R + SW + 14, -Math.PI, -Math.PI * 0.5, false); ctx.stroke()
+    ctx.restore()
+    // bend rolls (4 around curve)
+    for (let bi = 0; bi < 5; bi++) {
+      const angle = -Math.PI + bi * Math.PI / 8
+      const brx = BEND_CX + BEND_R * Math.cos(angle)
+      const bry = BEND_CY + BEND_R * Math.sin(angle)
+      ctx.save(); ctx.translate(brx, bry); ctx.rotate(running ? sim.rollAngle * 0.7 : 0)
+      ctx.fillStyle = running ? '#2c3e50' : '#1a2535'; ctx.strokeStyle = '#546E7A'; ctx.lineWidth = 0.8
+      ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+      ctx.restore()
+    }
+    lbl('STRAND BEND', BEND_CX - BEND_R * 0.6, BEND_CY - BEND_R * 0.5, '#37474F', clamp(W * 0.009, 7, 9))
+
+    // ── HORIZONTAL RUNOUT TABLE ────────────────────────────────────────
+    // Table frame
+    ctx.fillStyle = '#0f1a28'; ctx.fillRect(RUN_X0, RUN_Y, RUN_X1 - RUN_X0, RUN_H)
+    ctx.strokeStyle = '#1a2d40'; ctx.lineWidth = 1; ctx.strokeRect(RUN_X0, RUN_Y, RUN_X1 - RUN_X0, RUN_H)
+    // Roller clips top & bottom
+    ctx.fillStyle = '#141e2c'; ctx.fillRect(RUN_X0, RUN_Y, RUN_X1 - RUN_X0, 4)
+    ctx.fillRect(RUN_X0, RUN_Y + RUN_H - 4, RUN_X1 - RUN_X0, 4)
+
+    // Runout rollers
+    const RSTEP = clamp(W * 0.032, 20, 38)
+    for (let rx = RUN_X0 + RSTEP / 2; rx < RUN_X1; rx += RSTEP) {
+      ctx.save(); ctx.translate(rx, RUN_Y + RUN_H / 2); ctx.rotate(running ? sim.rollAngle * 0.65 : 0)
+      ctx.fillStyle = running ? '#1e2d3d' : '#111820'; ctx.strokeStyle = '#2a3d52'; ctx.lineWidth = 0.8
+      ctx.beginPath(); ctx.arc(0, 0, RUN_H * 0.38, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+      ctx.fillStyle = '#253545'; ctx.beginPath(); ctx.arc(0, 0, RUN_H * 0.13, 0, Math.PI * 2); ctx.fill()
+      if (running) {
+        ctx.strokeStyle = 'rgba(42,61,82,0.6)'; ctx.lineWidth = 0.8
+        ;[0, 1, 2].forEach(k => {
+          const a = k * Math.PI * 2 / 3 + sim.rollAngle * 0.65
+          ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * RUN_H * 0.33, Math.sin(a) * RUN_H * 0.33); ctx.stroke()
+        })
+      }
+      ctx.restore()
+    }
+
+    // DRAW SLABS ON RUNOUT with HEAT MAP
+    // Current slab being cast (growing from left)
+    if (sim.slabBeingCast && sim.slabBeingCast.len > 2) {
+      const sb = sim.slabBeingCast
+      const slabW = Math.min(sb.len, RUN_X1 - RUN_X0 - 20)
+      const colPerPx = sb.temps.length / slabW
+      for (let px = 0; px < slabW; px++) {
+        const tempIdx = Math.round(px * colPerPx)
+        const temp = sb.temps[Math.min(tempIdx, sb.temps.length - 1)] || 900
+        ctx.fillStyle = heatColor(temp, 600, 1350)
+        ctx.fillRect(RUN_X0 + 4 + px, RUN_Y + 3, 1, RUN_H - 6)
+      }
+      ctx.strokeStyle = '#455A64'; ctx.lineWidth = 0.5
+      ctx.strokeRect(RUN_X0 + 4, RUN_Y + 3, slabW, RUN_H - 6)
+    }
+
+    // Completed slabs moving right
+    sim.runoutSlabs.forEach(sl => {
+      const slabW = Math.min(sl.len, RUN_X1 - sl.x - 4)
+      if (slabW < 2) return
+      const colsPerPx = sl.temps.length / Math.max(slabW, 1)
+      for (let px = 0; px < slabW; px++) {
+        const tempIdx = Math.round(px * colsPerPx)
+        const temp = sl.temps[Math.min(tempIdx, sl.temps.length - 1)] || 700
+        ctx.fillStyle = heatColor(temp, 500, 1200)
+        ctx.fillRect(sl.x + px, RUN_Y + 3, 1, RUN_H - 6)
+      }
+      ctx.strokeStyle = '#37474F'; ctx.lineWidth = 0.5
+      ctx.strokeRect(sl.x, RUN_Y + 3, slabW, RUN_H - 6)
+    })
+
+    // Heat map scale bar
+    const HM_X = RUN_X0 + 4, HM_Y = RUN_Y + RUN_H + 6, HM_W = 100, HM_H = 6
+    for (let px = 0; px < HM_W; px++) {
+      const t = px / HM_W
+      ctx.fillStyle = heatColor(600 + t * 950, 600, 1550)
+      ctx.fillRect(HM_X + px, HM_Y, 1, HM_H)
+    }
+    lbl('600°C', HM_X, HM_Y + HM_H + 9, '#546E7A', 7, 'left')
+    lbl('1550°C', HM_X + HM_W, HM_Y + HM_H + 9, '#FF6D00', 7, 'right')
+    lbl('SLAB HEAT MAP', HM_X + HM_W / 2, HM_Y + HM_H + 9, '#37474F', 7)
+
+    lbl('HORIZONTAL RUNOUT TABLE', (RUN_X0 + RUN_X1) / 2, RUN_Y + RUN_H + 20, '#1e3040', clamp(W * 0.009, 7, 9))
+
+    // ── TCM — TORCH CUTTING MACHINE ────────────────────────────────────
+    const RAIL_Y = TORCH_RAIL_Y
+    // Rails
+    ctx.fillStyle = '#0a1520'; ctx.fillRect(RUN_X0, RAIL_Y, RUN_X1 - RUN_X0, 6)
+    ctx.fillStyle = '#0d1c2c'; ctx.fillRect(RUN_X0, RAIL_Y + 2, RUN_X1 - RUN_X0, 2)
+    ctx.fillRect(RUN_X0, RAIL_Y + 8, RUN_X1 - RUN_X0, 2)
+    lbl('TCM TORCH CUTTING MACHINE', RUN_X0 + 8, RAIL_Y - 8, '#1e3348', clamp(W * 0.009, 7, 9), 'left')
+
+    if (sim.torchOn) {
+      const tx = sim.torchX
+      // Carriage
+      ctx.fillStyle = '#1a3044'
+      ctx.beginPath(); ctx.roundRect(tx - 24, RAIL_Y - 10, 48, 20, 3); ctx.fill()
+      ctx.strokeStyle = '#2c4a65'; ctx.lineWidth = 1
+      ctx.beginPath(); ctx.roundRect(tx - 24, RAIL_Y - 10, 48, 20, 3); ctx.stroke()
+      // Wheels on rail
+      ;[-16, 16].forEach(wx => {
+        ctx.save(); ctx.translate(tx + wx, RAIL_Y + 5); ctx.rotate(sim.t * speed * 3)
+        ctx.fillStyle = '#253545'; ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill()
+        ctx.strokeStyle = '#3d5a73'; ctx.lineWidth = 0.8; ctx.stroke()
+        ctx.restore()
+      })
+      // Torch arm
+      ctx.fillStyle = '#2c4a65'; ctx.fillRect(tx - 4, RAIL_Y + 10, 8, RUN_Y - RAIL_Y - 10)
+      // Oxy hose (red)
+      ctx.strokeStyle = '#C62828'; ctx.lineWidth = 2.5
+      ctx.beginPath(); ctx.moveTo(tx + 10, RAIL_Y)
+      ctx.bezierCurveTo(tx + 60, RAIL_Y - 20, RUN_X1 - 30, RAIL_Y - 20, RUN_X1 - 15, RAIL_Y)
+      ctx.stroke()
+      // Acet hose (blue)
+      ctx.strokeStyle = '#1565C0'; ctx.lineWidth = 2.5
+      ctx.beginPath(); ctx.moveTo(tx - 10, RAIL_Y)
+      ctx.bezierCurveTo(tx - 60, RAIL_Y - 14, RUN_X1 - 40, RAIL_Y - 14, RUN_X1 - 15, RAIL_Y)
+      ctx.stroke()
+      // Gas valve box at end of hoses
+      ctx.fillStyle = '#1e2d3d'; ctx.fillRect(RUN_X1 - 20, RAIL_Y - 28, 20, 30); ctx.strokeStyle = '#2c4055'; ctx.lineWidth = 0.8; ctx.strokeRect(RUN_X1 - 20, RAIL_Y - 28, 20, 30)
+      lbl('O₂/C₂H₂', RUN_X1 - 10, RAIL_Y - 14, '#546E7A', 7)
+
+      // Torch tip & FLAME
+      ctx.fillStyle = '#FFB300'; ctx.beginPath(); ctx.arc(tx, RUN_Y - 2, 4, 0, Math.PI * 2); ctx.fill()
+      const FR = (8 + 4 * Math.sin(sim.t * 14)) 
+      const fg = ctx.createRadialGradient(tx, RUN_Y, 0, tx, RUN_Y, FR * 2.5)
+      fg.addColorStop(0, 'rgba(255,255,255,0.98)')
+      fg.addColorStop(0.15, 'rgba(255,250,100,0.95)')
+      fg.addColorStop(0.4, 'rgba(255,120,0,0.82)')
+      fg.addColorStop(0.75, 'rgba(255,40,0,0.45)')
+      fg.addColorStop(1, 'rgba(255,0,0,0)')
+      ctx.fillStyle = fg; ctx.beginPath(); ctx.arc(tx, RUN_Y, FR * 2.5, 0, Math.PI * 2); ctx.fill()
+      // secondary flame plume downward
+      const fg2 = ctx.createRadialGradient(tx, RUN_Y + FR, 0, tx, RUN_Y + FR * 2, FR * 1.5)
+      fg2.addColorStop(0, 'rgba(255,200,0,0.6)'); fg2.addColorStop(1, 'rgba(255,50,0,0)')
+      ctx.fillStyle = fg2; ctx.beginPath(); ctx.arc(tx, RUN_Y + FR, FR * 1.5, 0, Math.PI * 2); ctx.fill()
+      // Cut slot
+      ctx.strokeStyle = `rgba(255,120,0,${0.6 + 0.4 * Math.sin(sim.t * 15)})`; ctx.lineWidth = 2
+      ctx.beginPath(); ctx.moveTo(tx, RUN_Y - 2); ctx.lineTo(tx, RUN_Y + RUN_H + 2); ctx.stroke()
+      // kerf glow
+      const kg = ctx.createLinearGradient(tx - 4, 0, tx + 4, 0)
+      kg.addColorStop(0, 'rgba(255,120,0,0)'); kg.addColorStop(0.5, `rgba(255,200,0,${0.5 + 0.3 * Math.sin(sim.t * 15)})`); kg.addColorStop(1, 'rgba(255,120,0,0)')
+      ctx.fillStyle = kg; ctx.fillRect(tx - 4, RUN_Y, 8, RUN_H)
+
+      ctx.fillStyle = '#FFD54F'; ctx.font = `bold ${clamp(W * 0.011, 8, 13)}px monospace`; ctx.textAlign = 'center'
+      ctx.fillText('⚡ CUTTING', tx, RAIL_Y - 14)
+    } else {
+      // Parked carriage at left
+      ctx.fillStyle = '#0d1a28'
+      ctx.beginPath(); ctx.roundRect(RUN_X0 + 2, RAIL_Y - 10, 48, 20, 3); ctx.fill()
+      ctx.strokeStyle = '#1e3040'; ctx.lineWidth = 0.8
+      ctx.beginPath(); ctx.roundRect(RUN_X0 + 2, RAIL_Y - 10, 48, 20, 3); ctx.stroke()
+      lbl('TORCH PARK', RUN_X0 + 26, RAIL_Y + 4, '#1e3040', clamp(W * 0.009, 7, 9))
+      // cooldown bar
+      if (sim.torchCD > 0) {
+        const cdPct = 1 - sim.torchCD / 240
+        ctx.fillStyle = '#1a2535'; ctx.fillRect(RUN_X0 + 60, RAIL_Y - 4, 80, 8)
+        ctx.fillStyle = '#FF6D00'; ctx.fillRect(RUN_X0 + 60, RAIL_Y - 4, 80 * cdPct, 8)
+        lbl(`NEXT CUT: ${(100 * cdPct).toFixed(0)}%`, RUN_X0 + 100, RAIL_Y + 14, '#FF6D00', clamp(W * 0.009, 7, 9))
+      }
+    }
+
+    // Sparks
+    sim.sparks.forEach(sp => {
+      ctx.globalAlpha = sp.life
+      ctx.fillStyle = sp.col; ctx.beginPath(); ctx.arc(sp.x, sp.y, sp.r, 0, Math.PI * 2); ctx.fill()
+      ctx.globalAlpha = sp.life * 0.28; ctx.fillStyle = '#FF8F00'
+      ctx.beginPath(); ctx.arc(sp.x - sp.vx * 0.5, sp.y - sp.vy * 0.5, sp.r * 0.4, 0, Math.PI * 2); ctx.fill()
+    })
+    // Steam puffs
+    sim.steamPuffs.forEach(sp => {
+      ctx.globalAlpha = sp.life * 0.28
+      ctx.fillStyle = 'rgba(200,230,255,1)'
+      ctx.beginPath(); ctx.arc(sp.x, sp.y, sp.r, 0, Math.PI * 2); ctx.fill()
+    })
+    ctx.globalAlpha = 1
+
+    // ── HUD ───────────────────────────────────────────────────────────
+    const HX = W - 198, HY2 = 6, HW = 190, RH2 = 27
+    ctx.fillStyle = 'rgba(4,8,18,0.84)'; ctx.fillRect(HX - 4, HY2, HW + 8, RH2 * 13 + 12)
+    ctx.strokeStyle = '#1a3050'; ctx.lineWidth = 0.8; ctx.strokeRect(HX - 4, HY2, HW + 8, RH2 * 13 + 12)
+    ctx.fillStyle = '#3d6a8a'; ctx.font = `bold ${clamp(W * 0.011, 8, 11)}px monospace`; ctx.textAlign = 'center'
+    ctx.fillText('PROCESS MONITOR', HX + HW / 2, HY2 + 14)
     const rows = [
-      ['SPEED', `${speed.toFixed(2)} m/m`, '#FF8F00'],
-      ['MOLD LVL', `${moldLevel.toFixed(0)} %`, '#00E5FF'],
-      ['TUN TEMP', `${tundishTemp} °C`, '#FFB300'],
+      ['CAST SPEED', `${speed.toFixed(2)} m/min`, '#FF8F00'],
+      ['LADLE LEVEL', `${(ladleLevel * 100).toFixed(0)}%  ${(ladleLevel * 250).toFixed(0)}t`, '#FF7043'],
+      ['LADLE FLOW', running ? `${sim.ladleFlowRate.toFixed(0)} kg/s` : '--', '#FF5722'],
+      ['TUNDISH LEVEL', `${(tundishLevel * 100).toFixed(0)}%  ${(tundishLevel * 28).toFixed(1)}t`, '#FFB300'],
+      ['TUNDISH TEMP', `${tundishTemp} °C`, '#FFA000'],
       ['SUPERHEAT', `${tundishTemp - 1537} °C`, tundishTemp - 1537 > 38 ? '#f85149' : '#57ab5a'],
-      ['SLABS CUT', `${s.slabsCut}`, '#9b5de5'],
-      ['Z1 WATER', running ? `${(speed * 80).toFixed(0)} L/m` : '0', '#29B6F6'],
-      ['Z2 WATER', running ? `${(speed * 55).toFixed(0)} L/m` : '0', '#4FC3F7'],
-      ['Z3 WATER', running ? `${(speed * 35).toFixed(0)} L/m` : '0', '#81D4FA'],
-      ['OUTPUT', `${(slabWidth * slabThickness * speed * 7.8 / 1e6).toFixed(2)} t/h`, '#39c5cf'],
+      ['MOLD LEVEL', `${moldLevel.toFixed(1)} %`, '#00E5FF'],
+      ['MOLD OSC', running ? `±${Math.abs(sim.moldOsc).toFixed(1)}mm` : 'OFF', '#00BCD4'],
+      ['Z1 WATER', running ? `${(speed * 78).toFixed(0)} L/m` : '--', '#29B6F6'],
+      ['Z2 WATER', running ? `${(speed * 56).toFixed(0)} L/m` : '--', '#4FC3F7'],
+      ['Z3 WATER', running ? `${(speed * 40).toFixed(0)} L/m` : '--', '#81D4FA'],
+      ['SLABS CUT', `${sim.slabsCut}`, '#9b5de5'],
       ['STATUS', running ? 'CASTING ●' : 'STANDBY ○', running ? '#57ab5a' : '#546E7A'],
     ]
-    ctx.font = `${Math.max(7, W * 0.009)}px monospace`
     rows.forEach(([l, v, c], i) => {
-      const ry = OY + 4 + i * ROWH
-      ctx.fillStyle = '#4d7a9a'; ctx.textAlign = 'left'; ctx.fillText(l, OX, ry + ROWH * 0.65)
-      ctx.fillStyle = c; ctx.textAlign = 'right'; ctx.fillText(v, OX + OW, ry + ROWH * 0.65)
-      ctx.strokeStyle = 'rgba(30,45,69,0.6)'; ctx.lineWidth = 0.4
-      ctx.beginPath(); ctx.moveTo(OX - 2, ry + ROWH); ctx.lineTo(OX + OW, ry + ROWH); ctx.stroke()
+      const ry = HY2 + 20 + i * RH2
+      ctx.fillStyle = '#0a1422'; ctx.fillRect(HX, ry, HW, RH2 - 2)
+      ctx.strokeStyle = '#1a3050'; ctx.lineWidth = 0.3; ctx.strokeRect(HX, ry, HW, RH2 - 2)
+      ctx.fillStyle = '#4d7a9a'; ctx.font = `${clamp(W * 0.009, 7, 10)}px monospace`; ctx.textAlign = 'left'
+      ctx.fillText(l, HX + 5, ry + 11)
+      ctx.fillStyle = c; ctx.font = `bold ${clamp(W * 0.01, 8, 11)}px monospace`; ctx.textAlign = 'right'
+      ctx.fillText(v, HX + HW - 4, ry + RH2 - 5)
     })
 
-    // ── FOOTER ─────────────────────────────────────────────────────────────
-    ctx.fillStyle = 'rgba(4,8,16,0.8)'; ctx.fillRect(0, H - 18, W, 18)
-    ctx.fillStyle = '#2c4055'; ctx.font = `${Math.max(8, W * 0.01)}px monospace`
-    ctx.textAlign = 'left'; ctx.fillText(`SINGLE STRAND SLAB CASTER | ${heatNo} | ${slabWidth}×${slabThickness}mm`, 8, H - 5)
-    ctx.textAlign = 'right'; ctx.fillText(new Date().toLocaleTimeString(), W - 8, H - 5)
+    // ── FOOTER ────────────────────────────────────────────────────────
+    ctx.fillStyle = 'rgba(4,8,18,0.9)'; ctx.fillRect(0, H - 18, W, 18)
+    ctx.fillStyle = '#2c4055'; ctx.font = `${clamp(W * 0.009, 7, 10)}px monospace`; ctx.textAlign = 'left'
+    ctx.fillText(`SINGLE STRAND SLAB CASTER  |  ${heatNo}  |  ${slabWidth}×${slabThick}mm  |  SPEED: ${speed.toFixed(2)} m/min`, 8, H - 4)
+    ctx.textAlign = 'right'; ctx.fillText(new Date().toLocaleTimeString(), W - 8, H - 4)
 
     rafRef.current = requestAnimationFrame(draw)
-  }, [running, speed, tundishTemp, moldLevel, slabWidth, slabThickness, heatNo])
+  }, [running, speed, tundishTemp, moldLevel, slabWidth, slabThick, heatNo, ladleLevel, tundishLevel])
 
   useEffect(() => {
     rafRef.current = requestAnimationFrame(draw)
@@ -493,10 +799,11 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, slabWidth, slab
 // UI
 // ─────────────────────────────────────────────────────────────────────────────
 const C = {
-  bg: '#07090f', panel: '#0c1220', border: '#1e2d45',
+  bg: '#07090f', panel: '#0b1220', border: '#1a2d45',
   text: '#cdd9e5', muted: '#6e8098', accent: '#FF8F00',
-  success: '#57ab5a', danger: '#e5534b', cyan: '#39c5cf', warning: '#c69026',
+  success: '#57ab5a', danger: '#e5534b', cyan: '#39c5cf',
 }
+const clampUI = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
 
 function Slider({ label, value, onChange, min, max, step = 0.1, unit, disabled }) {
   return (
@@ -505,57 +812,65 @@ function Slider({ label, value, onChange, min, max, step = 0.1, unit, disabled }
         <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{label}</span>
         <span style={{ fontSize: 11, color: C.accent, fontFamily: 'monospace', fontWeight: 700 }}>{value}{unit}</span>
       </div>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(+e.target.value)} disabled={disabled}
+      <input type="range" min={min} max={max} step={step} value={value}
+        onChange={e => onChange(+e.target.value)} disabled={disabled}
         style={{ width: '100%', accentColor: C.accent, opacity: disabled ? 0.4 : 1, cursor: disabled ? 'not-allowed' : 'pointer', height: 20 }} />
     </div>
   )
 }
 
 export default function SlabCastingModel() {
-  const [running, setRunning]         = useState(false)
-  const [speed, setSpeed]             = useState(1.20)
-  const [tundishTemp, setTundishTemp] = useState(1555)
-  const [slabWidth, setSlabWidth]     = useState(1200)
-  const [slabThick, setSlabThick]     = useState(220)
-  const [moldLevel, setMoldLevel]     = useState(85)
-  const [elapsed, setElapsed]         = useState(0)
-  const [castLen, setCastLen]         = useState(0)
-  const [panelOpen, setPanelOpen]     = useState(true)
-  const [heatNo]                      = useState(`SC-${Math.floor(Math.random() * 9000 + 1000)}`)
+  const [running, setRunning]             = useState(false)
+  const [speed, setSpeed]                 = useState(1.20)
+  const [tundishTemp, setTundishTemp]     = useState(1555)
+  const [slabWidth, setSlabWidth]         = useState(1200)
+  const [slabThick, setSlabThick]         = useState(220)
+  const [moldLevel, setMoldLevel]         = useState(85)
+  const [ladleLevel, setLadleLevel]       = useState(1.0)
+  const [tundishLevel, setTundishLevel]   = useState(0.7)
+  const [elapsed, setElapsed]             = useState(0)
+  const [slabsCut, setSlabsCut]           = useState(0)
+  const [panelOpen, setPanelOpen]         = useState(true)
+  const [heatNo]                          = useState(`SC-${Math.floor(Math.random() * 9000 + 1000)}`)
   const timerRef = useRef(null)
 
   useEffect(() => {
-    if (running) {
-      timerRef.current = setInterval(() => {
-        setElapsed(t => t + 1)
-        setCastLen(l => l + speed / 60)
-        setMoldLevel(v => Math.max(55, Math.min(100, v + (Math.random() - 0.48) * 1.5 + (85 - v) * 0.05)))
-      }, 1000)
-    } else clearInterval(timerRef.current)
+    if (running) { timerRef.current = setInterval(() => setElapsed(t => t + 1), 1000) }
+    else clearInterval(timerRef.current)
     return () => clearInterval(timerRef.current)
-  }, [running, speed])
+  }, [running])
 
-  const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+  const fmt = t => `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`
 
   return (
     <div style={{ height: '100dvh', background: C.bg, color: C.text, fontFamily: 'monospace', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Header */}
       <div style={{ background: '#060a10', borderBottom: `1px solid ${C.border}`, padding: '0 12px', height: 48, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 18 }}>🔩</span>
+          <span style={{ fontSize: 20 }}>🏭</span>
           <div>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', lineHeight: 1.2 }}>SLAB CASTING MODEL</div>
-            <div style={{ fontSize: 8, color: C.muted, letterSpacing: '0.1em' }}>SINGLE STRAND · REAL-TIME</div>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>SINGLE STRAND SLAB CASTER</div>
+            <div style={{ fontSize: 8, color: C.muted, letterSpacing: '0.1em' }}>PHYSICS-BASED REAL-TIME PLANT SIMULATION</div>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 10, color: running ? C.success : C.muted, fontFamily: 'monospace' }}>{fmt(elapsed)}</span>
-          <span style={{ fontSize: 10, color: C.cyan }}>{castLen.toFixed(1)}m</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {[
+            { l: 'TIME',   v: fmt(elapsed),             c: running ? C.success : C.muted },
+            { l: 'LADLE',  v: `${(ladleLevel * 100).toFixed(0)}%`, c: ladleLevel < 0.2 ? C.danger : '#FF7043' },
+            { l: 'TUNDISH',v: `${(tundishLevel*100).toFixed(0)}%`, c: '#FFB300' },
+            { l: 'MOLD',   v: `${moldLevel.toFixed(0)}%`, c: moldLevel < 72 ? C.danger : C.success },
+            { l: 'SLABS',  v: `${slabsCut}`,             c: C.cyan },
+          ].map(item => (
+            <div key={item.l} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 7, color: C.muted }}>{item.l}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: item.c }}>{item.v}</div>
+            </div>
+          ))}
           <button onClick={() => setPanelOpen(v => !v)}
             style={{ padding: '4px 8px', borderRadius: 3, border: `1px solid ${C.border}`, background: 'transparent', color: C.muted, fontSize: 11, cursor: 'pointer' }}>
             {panelOpen ? '◀' : '▶'}
           </button>
-          <button onClick={() => { setRunning(v => !v); if (!running) { setElapsed(0); setCastLen(0) } }}
+          <button onClick={() => { setRunning(v => !v); if (!running) { setElapsed(0); setLadleLevel(1.0); setTundishLevel(0.7); setSlabsCut(0) } }}
             style={{ padding: '6px 14px', borderRadius: 4, border: `1px solid ${running ? C.danger : C.success}`, background: running ? 'rgba(229,83,73,0.15)' : 'rgba(87,171,90,0.15)', color: running ? C.danger : C.success, fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.05em' }}>
             {running ? '⏹ STOP' : '▶ START'}
           </button>
@@ -563,21 +878,22 @@ export default function SlabCastingModel() {
       </div>
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Control Panel */}
         {panelOpen && (
-          <div style={{ width: 200, background: C.panel, borderRight: `1px solid ${C.border}`, padding: '12px', overflow: 'auto', flexShrink: 0 }}>
+          <div style={{ width: 210, background: C.panel, borderRight: `1px solid ${C.border}`, padding: '12px', overflow: 'auto', flexShrink: 0 }}>
             <div style={{ fontSize: 9, color: C.muted, letterSpacing: '0.12em', marginBottom: 12 }}>PARAMETERS</div>
             <Slider label="Cast Speed" value={speed} onChange={setSpeed} min={0.5} max={2.5} step={0.05} unit=" m/min" disabled={running} />
             <Slider label="Tundish Temp" value={tundishTemp} onChange={setTundishTemp} min={1530} max={1580} step={1} unit="°C" disabled={running} />
             <Slider label="Slab Width" value={slabWidth} onChange={setSlabWidth} min={900} max={1680} step={10} unit="mm" disabled={running} />
             <Slider label="Slab Thick" value={slabThick} onChange={setSlabThick} min={150} max={300} step={10} unit="mm" disabled={running} />
             <div style={{ height: 1, background: C.border, margin: '10px 0' }} />
-            <div style={{ fontSize: 9, color: C.muted, letterSpacing: '0.12em', marginBottom: 8 }}>COMPUTED</div>
+            <div style={{ fontSize: 9, color: C.muted, letterSpacing: '0.12em', marginBottom: 8 }}>LIVE VALUES</div>
             {[
+              { l: 'Ladle', v: `${(ladleLevel * 100).toFixed(0)}%`, c: ladleLevel < 0.2 ? C.danger : '#FF7043' },
+              { l: 'Tundish', v: `${(tundishLevel * 100).toFixed(0)}%`, c: '#FFB300' },
               { l: 'Superheat', v: `${tundishTemp - 1537}°C`, c: tundishTemp - 1537 > 40 ? C.danger : C.success },
-              { l: 'Pool Depth', v: `${(speed * speed * 6.5).toFixed(1)}m`, c: C.cyan },
-              { l: 'Output', v: `${(slabWidth * slabThick * speed * 7.8 / 1e6).toFixed(2)}t/h`, c: C.accent },
               { l: 'Mold Level', v: `${moldLevel.toFixed(0)}%`, c: moldLevel < 72 ? C.danger : C.success },
+              { l: 'Output', v: `${(slabWidth * slabThick * speed * 7.8 / 1e6).toFixed(2)}t/h`, c: C.accent },
+              { l: 'Slabs Cut', v: `${slabsCut}`, c: C.cyan },
             ].map(r => (
               <div key={r.l} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: `1px solid ${C.border}` }}>
                 <span style={{ fontSize: 9, color: C.muted }}>{r.l}</span>
@@ -585,8 +901,18 @@ export default function SlabCastingModel() {
               </div>
             ))}
             <div style={{ height: 1, background: C.border, margin: '10px 0' }} />
+            <div style={{ fontSize: 9, color: C.muted, marginBottom: 6 }}>HEAT MAP</div>
+            <div style={{ display: 'flex', height: 12, borderRadius: 2, overflow: 'hidden', marginBottom: 3 }}>
+              {Array.from({ length: 60 }, (_, i) => (
+                <div key={i} style={{ flex: 1, background: heatColor(600 + i * 15.8, 600, 1550) }} />
+              ))}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: C.muted }}>
+              <span>600°C</span><span>COOL → HOT</span><span>1550°C</span>
+            </div>
+            <div style={{ height: 1, background: C.border, margin: '10px 0' }} />
             <div style={{ fontSize: 9, color: C.muted, marginBottom: 6 }}>LEGEND</div>
-            {[['#FF6D00','Liquid steel'],['#607D8B','Solid shell'],['#29B6F6','Cooling water'],['#FFD54F','Torch sparks'],['#00E5FF','Mold level']].map(([c, l]) => (
+            {[['#FF6D00', 'Liquid steel'], ['#607D8B', 'Solid shell'], ['#29B6F6', 'Cooling water'], ['#FFD54F', 'TCM sparks'], ['#00E5FF', 'Mold level'], ['#9b5de5', 'Pool depth']].map(([c, l]) => (
               <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
                 <div style={{ width: 8, height: 8, borderRadius: 2, background: c, flexShrink: 0 }} />
                 <span style={{ fontSize: 9, color: C.muted }}>{l}</span>
@@ -594,10 +920,15 @@ export default function SlabCastingModel() {
             ))}
           </div>
         )}
-        {/* Canvas fills remaining space */}
-        <div style={{ flex: 1, overflow: 'hidden', background: '#07090f' }}>
-          <CastingCanvas running={running} speed={speed} tundishTemp={tundishTemp}
-            moldLevel={moldLevel} slabWidth={slabWidth} slabThickness={slabThick} heatNo={heatNo} />
+        <div style={{ flex: 1, overflow: 'hidden', background: '#06090f' }}>
+          <CastingCanvas
+            running={running} speed={speed} tundishTemp={tundishTemp}
+            moldLevel={moldLevel} setMoldLevel={setMoldLevel}
+            slabWidth={slabWidth} slabThick={slabThick} heatNo={heatNo}
+            ladleLevel={ladleLevel} setLadleLevel={setLadleLevel}
+            tundishLevel={tundishLevel} setTundishLevel={setTundishLevel}
+            onSlabCut={() => setSlabsCut(v => v + 1)}
+          />
         </div>
       </div>
     </div>
