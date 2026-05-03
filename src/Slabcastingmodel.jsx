@@ -144,71 +144,95 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
         return clamp(v + d, 0, 99)
       })
 
-      // ── STRAND / SLAB SEGMENTS ────────────────────────────────────────
-      // Each frame push a new hot segment at top of strand
+      // ── STRAND ACTIVE? Only push steel when mold has content ────────────
+      const moldHasSteel = moldLevel > 2
       const pixelsThisFrame = speed * PX_PER_M * 0.016  // px this frame
-      sim.strandPixels += pixelsThisFrame
 
-      // Push new hot segment at mold exit
-      sim.slabSegments.unshift({ temp: tundishTemp - 5, solidFrac: 0.0, px: pixelsThisFrame })
+      if (moldHasSteel) {
+        // Push new hot segment at mold exit (top of strand)
+        sim.slabSegments.unshift({ temp: tundishTemp - 5, solidFrac: 0.0 })
+      }
 
-      // Advance / cool all segments
+      // Always advance & cool existing segments (they keep moving under gravity/rolls)
       sim.slabSegments = sim.slabSegments.map((seg, idx) => {
-        const depth = idx * pixelsThisFrame  // approx distance below mold
-        const depthM = depth / PX_PER_M
-        // cooling profile: surface temp drops, solid fraction rises
-        const coolRate  = 0.3 + depth / STR_H * 1.8   // faster near bottom
-        const newTemp   = Math.max(800, seg.temp - coolRate * speed * 0.8)
-        const solidFrac = Math.min(1.0, seg.solidFrac + 0.003 * speed * (0.5 + depthM * 0.3))
-        return { ...seg, temp: newTemp, solidFrac }
+        const depthM = (idx * pixelsThisFrame) / PX_PER_M
+        const coolRate = 0.3 + (idx / Math.max(sim.slabSegments.length, 1)) * 1.8
+        const newTemp  = Math.max(600, seg.temp - coolRate * speed * 0.8)
+        const newSolid = Math.min(1.0, seg.solidFrac + 0.003 * speed * (0.5 + depthM * 0.3))
+        return { ...seg, temp: newTemp, solidFrac: newSolid }
       })
 
-      // Remove segments that have moved past strand bottom
-      const maxSegs = Math.ceil(STR_H / pixelsThisFrame) + 20
-      if (sim.slabSegments.length > maxSegs) sim.slabSegments = sim.slabSegments.slice(0, maxSegs)
-
-      // ── RUNOUT SLAB HEAT MAP ──────────────────────────────────────────
-      // Build current slab being cast
-      if (!sim.slabBeingCast) {
-        sim.slabBeingCast = { x: RUN_X0 + 4, temps: [], len: 0 }
-        sim.targetSlabLen = clamp(speed * 40 + 120, 100, RUN_X1 - RUN_X0 - 60)
+      // Drain segments out of strand bottom into runout
+      const maxSegs = Math.ceil(STR_H / Math.max(pixelsThisFrame, 0.5)) + 10
+      if (sim.slabSegments.length > maxSegs) {
+        // Segments exiting bottom become runout slab columns
+        const exitSegs = sim.slabSegments.splice(maxSegs)
+        if (sim.slabBeingCast && exitSegs.length > 0) {
+          const avgTemp = exitSegs.reduce((a,s) => a + s.temp, 0) / exitSegs.length
+          sim.slabBeingCast.temps.push(clamp(avgTemp, 600, 1300))
+          sim.slabBeingCast.len += exitSegs.length * pixelsThisFrame * 0.5
+        }
       }
-      // Add a new pixel-column of slab exiting bend
-      const exitTemp = sim.slabSegments.length > 0 ? sim.slabSegments[sim.slabSegments.length - 1].temp : 900
-      sim.slabBeingCast.len += pixelsThisFrame
-      sim.slabBeingCast.temps.push(clamp(exitTemp, 700, 1300))
 
-      // Move existing runout slabs
+      // When strand is fully empty (no mold steel & segments cooled out) clear it
+      if (!moldHasSteel && sim.slabSegments.every(s => s.solidFrac >= 0.99)) {
+        sim.slabSegments = []
+      }
+
+      // ── RUNOUT SLAB BUILD ─────────────────────────────────────────────
+      // Only build slab while mold has steel OR strand still has segments
+      const strandHasMetal = sim.slabSegments.length > 0
+
+      if (moldHasSteel || strandHasMetal) {
+        if (!sim.slabBeingCast) {
+          sim.slabBeingCast = { x: RUN_X0 + 4, temps: [], len: 0 }
+          sim.targetSlabLen = clamp(speed * 40 + 120, 100, RUN_X1 - RUN_X0 - 80)
+        }
+        // Add column from exit temp of last strand segment
+        if (sim.slabSegments.length > 0) {
+          const exitTemp = sim.slabSegments[sim.slabSegments.length - 1].temp
+          sim.slabBeingCast.temps.push(clamp(exitTemp, 600, 1300))
+          sim.slabBeingCast.len += pixelsThisFrame * 0.6
+        }
+      } else {
+        // No more metal — finalize any partial slab on runout
+        if (sim.slabBeingCast && sim.slabBeingCast.len > 20) {
+          sim.runoutSlabs.push({ ...sim.slabBeingCast })
+          sim.slabBeingCast = null
+        } else if (sim.slabBeingCast) {
+          sim.slabBeingCast = null
+        }
+      }
+
+      // Move existing runout slabs rightward & cool them
       sim.runoutSlabs = sim.runoutSlabs.map(sl => ({
         ...sl,
-        x: sl.x + pixelsThisFrame * 2.5,
-        temps: sl.temps.map(t => Math.max(500, t - speed * 0.15))
-      })).filter(sl => sl.x < RUN_X1 + 400)
+        x: sl.x + pixelsThisFrame * 2.2,
+        temps: sl.temps.map(t => Math.max(400, t - speed * 0.12))
+      })).filter(sl => sl.x < RUN_X1 + 500)
 
-      // TORCH cutting — only when steel is flowing
+      // ── TORCH — only cuts when there IS a slab ready ─────────────────
       if (!sim.torchOn) {
-        sim.torchCD -= 1
         if (sim.slabBeingCast && sim.slabBeingCast.len >= sim.targetSlabLen) {
           sim.torchOn = true
           sim.torchX  = RUN_X0 + 10
-          // park current slab into runout list
-          sim.runoutSlabs.push({ ...sim.slabBeingCast, cutting: false })
+          sim.runoutSlabs.push({ ...sim.slabBeingCast })
           sim.slabBeingCast = null
         }
       } else {
-        sim.torchX += speed * 3.2
-        // sparks
+        sim.torchX += speed * 3.0
         for (let k = 0; k < 5; k++) sim.sparks.push({
           x: sim.torchX, y: RUN_Y + RUN_H * 0.5,
           vx: (Math.random() - 0.5) * 7, vy: -Math.random() * 6 - 1,
           life: 1, r: Math.random() * 2.5 + 0.5,
           col: Math.random() > 0.5 ? '#FF6D00' : '#FFD54F'
         })
-        // steam puffs
-        if (sim.frame % 4 === 0) sim.steamPuffs.push({ x: sim.torchX, y: RUN_Y - 4, vx: (Math.random() - 0.3) * 1.5, vy: -1.5 - Math.random(), life: 1, r: 4 })
-
+        if (sim.frame % 4 === 0) sim.steamPuffs.push({
+          x: sim.torchX, y: RUN_Y - 4,
+          vx: (Math.random() - 0.3) * 1.5, vy: -1.5 - Math.random(), life: 1, r: 4
+        })
         if (sim.torchX > RUN_X0 + sim.targetSlabLen) {
-          sim.torchOn = false; sim.torchCD = Math.round(200 / speed)
+          sim.torchOn = false
           sim.slabsCut++
           onSlabCut()
         }
