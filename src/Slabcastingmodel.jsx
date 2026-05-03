@@ -13,7 +13,7 @@ function heatColor(temp, min = 600, max = 1550) {
 }
 
 function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, slabWidth, slabThick, heatNo,
-  ladleLevel, setLadleLevel, tundishLevel, setTundishLevel, onSlabCut }) {
+  ladleLevel, setLadleLevel, tundishLevel, setTundishLevel, onSlabCut, doReset }) {
   const canvasRef = useRef(null)
   const rafRef    = useRef(null)
   const S = useRef({
@@ -51,6 +51,21 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
     fit(); window.addEventListener('resize', fit)
     return () => window.removeEventListener('resize', fit)
   }, [])
+
+  useEffect(() => {
+    if (!doReset) return
+    const sim = S.current
+    sim.t = 0; sim.frame = 0
+    sim.ladleKg = 250000; sim.tundishKg = 25000
+    sim.ladleFlowRate = 0; sim.tundishFlowRate = 0
+    sim.moldOsc = 0; sim.moldDir = 1
+    sim.strandPixels = 0; sim.slabSegments = []
+    sim.runoutSlabs = []; sim.slabBeingCast = null
+    sim.torchX = 0; sim.torchOn = false; sim.torchCD = 240
+    sim.slabLen = 0; sim.targetSlabLen = 0; sim.slabsCut = 0
+    sim.drops = []; sim.sparks = []; sim.steamPuffs = []
+    sim.rollAngle = 0; sim.nozzlePulse = 0
+  }, [doReset])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
@@ -100,36 +115,34 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
 
     const PX_PER_M = STR_H / 8  // 1 m of strand = this many pixels
 
-    // ── PHYSICS TICK (every frame = 16ms) ──────────────────────────────
+    // PHYSICS TICK
     if (running) {
-      const dt = 0.016 * speed  // physics scaled by cast speed
+      const dt = 0.016
 
-      // Mold oscillation: ±4mm at 1–2 Hz
-      sim.moldOsc += sim.moldDir * (0.5 * speed); if (Math.abs(sim.moldOsc) > 4) sim.moldDir *= -1
-
-      // Roll angle
+      sim.moldOsc += sim.moldDir * 0.35; if (Math.abs(sim.moldOsc) > 4) sim.moldDir *= -1
       sim.rollAngle += speed * 0.08
+      sim.nozzlePulse = (sim.nozzlePulse + 0.12) % (Math.PI * 2)
 
-      // Nozzle pulse
-      sim.nozzlePulse = (sim.nozzlePulse + 0.12 * speed) % (Math.PI * 2)
-
-      // ── LADLE → TUNDISH flow ──────────────────────────────────────────
-      sim.ladleFlowRate = sim.ladleKg > 500 ? clamp(speed * 220, 100, 400) : 0  // kg/s
-      const ladleOut    = sim.ladleFlowRate * dt
-      sim.ladleKg       = Math.max(0, sim.ladleKg - ladleOut)
+      // LADLE: 250t drains over ~25 min at speed 1.2
+      const ladleFlowKgPerSec = sim.ladleKg > 200 ? clamp(speed * 140, 60, 260) : 0
+      sim.ladleFlowRate = ladleFlowKgPerSec
+      const ladleOut = ladleFlowKgPerSec * dt
+      sim.ladleKg = Math.max(0, sim.ladleKg - ladleOut)
       setLadleLevel(sim.ladleKg / 250000)
 
-      // ── TUNDISH balance ───────────────────────────────────────────────
-      const tundishIn   = ladleOut
-      sim.tundishFlowRate = clamp(speed * 160, 80, 300)  // kg/s → mold
-      const tundishOut  = sim.tundishFlowRate * dt
-      sim.tundishKg     = clamp(sim.tundishKg + tundishIn - tundishOut, 0, sim.tundishMaxKg)
+      // TUNDISH: inflow from ladle, outflow at casting rate
+      const castKgS = slabWidth * slabThick * speed / 60 * 7800 / 1e6
+      sim.tundishKg = clamp(sim.tundishKg + ladleOut - castKgS * dt, 0, sim.tundishMaxKg)
+      sim.tundishFlowRate = castKgS
       setTundishLevel(sim.tundishKg / sim.tundishMaxKg)
 
-      // ── MOLD LEVEL ────────────────────────────────────────────────────
-      // mold level oscillates ±2% around 85% driven by tundish flow vs casting speed
-      const moldTarget = 85 + (sim.tundishKg / sim.tundishMaxKg - 0.88) * 30
-      setMoldLevel(v => clamp(v + (moldTarget - v) * 0.04 + (Math.random() - 0.5) * 0.5, 60, 99))
+      // MOLD LEVEL: follows tundish, drains when tundish empty
+      const tFrac = sim.tundishKg / sim.tundishMaxKg
+      const mTarget = tFrac > 0.05 ? clamp(82 + (tFrac - 0.6) * 18, 62, 95) : 0
+      setMoldLevel(v => {
+        const d = tFrac > 0.05 ? (mTarget - v) * 0.07 + (Math.random() - 0.5) * 0.3 : -0.5
+        return clamp(v + d, 0, 99)
+      })
 
       // ── STRAND / SLAB SEGMENTS ────────────────────────────────────────
       // Each frame push a new hot segment at top of strand
@@ -172,7 +185,7 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
         temps: sl.temps.map(t => Math.max(500, t - speed * 0.15))
       })).filter(sl => sl.x < RUN_X1 + 400)
 
-      // ── TORCH cutting ─────────────────────────────────────────────────
+      // TORCH cutting — only when steel is flowing
       if (!sim.torchOn) {
         sim.torchCD -= 1
         if (sim.slabBeingCast && sim.slabBeingCast.len >= sim.targetSlabLen) {
@@ -196,6 +209,7 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
 
         if (sim.torchX > RUN_X0 + sim.targetSlabLen) {
           sim.torchOn = false; sim.torchCD = Math.round(200 / speed)
+          sim.slabsCut++
           onSlabCut()
         }
       }
@@ -830,6 +844,7 @@ export default function SlabCastingModel() {
   const [tundishLevel, setTundishLevel]   = useState(0.7)
   const [elapsed, setElapsed]             = useState(0)
   const [slabsCut, setSlabsCut]           = useState(0)
+  const [resetCount, setResetCount]       = useState(0)
   const [panelOpen, setPanelOpen]         = useState(true)
   const [heatNo]                          = useState(`SC-${Math.floor(Math.random() * 9000 + 1000)}`)
   const timerRef = useRef(null)
@@ -870,7 +885,7 @@ export default function SlabCastingModel() {
             style={{ padding: '4px 8px', borderRadius: 3, border: `1px solid ${C.border}`, background: 'transparent', color: C.muted, fontSize: 11, cursor: 'pointer' }}>
             {panelOpen ? '◀' : '▶'}
           </button>
-          <button onClick={() => { setRunning(v => !v); if (!running) { setElapsed(0); setLadleLevel(1.0); setTundishLevel(0.7); setSlabsCut(0) } }}
+          <button onClick={() => { setRunning(v => !v); if (!running) { setElapsed(0); setLadleLevel(1.0); setTundishLevel(0.88); setMoldLevel(85); setSlabsCut(0); setResetCount(c => c + 1) } }}
             style={{ padding: '6px 14px', borderRadius: 4, border: `1px solid ${running ? C.danger : C.success}`, background: running ? 'rgba(229,83,73,0.15)' : 'rgba(87,171,90,0.15)', color: running ? C.danger : C.success, fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.05em' }}>
             {running ? '⏹ STOP' : '▶ START'}
           </button>
@@ -928,6 +943,7 @@ export default function SlabCastingModel() {
             ladleLevel={ladleLevel} setLadleLevel={setLadleLevel}
             tundishLevel={tundishLevel} setTundishLevel={setTundishLevel}
             onSlabCut={() => setSlabsCut(v => v + 1)}
+            doReset={resetCount}
           />
         </div>
       </div>
