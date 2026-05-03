@@ -2,10 +2,9 @@ import { useState } from 'react'
 
 const USERS = [
   { username: 'admin', password: 'shan@2024', role: 'admin', name: 'Admin User' },
-  { username: 'shantanu', password: 'steel@123', role: 'user', name: 'Shantanu' },
-  { username: 'operator', password: 'bof@2024', role: 'operator', name: 'BOF Operator' },
+  { username: 'shantanu', password: 'steel@123', role: 'steel', name: 'Shantanu' },
+  { username: 'operator', password: 'bof@2024', role: 'steel', name: 'BOF Operator' },
 ]
-
 const M = {
   primary: '#1565C0', primaryLight: '#1976D2',
   surface: '#FFFFFF', background: '#ECEFF1',
