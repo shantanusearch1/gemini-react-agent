@@ -71,17 +71,17 @@ const FREE_MODELS = [
 ]
 
 const NAV_ITEMS = [
-  { id: 'chat', icon: 'chat', label: 'Chat', protected: false },
-  { id: 'jsx', icon: 'code', label: 'JSX Generator', protected: true },
-  { id: 'sql', icon: 'storage', label: 'SQL Generator', protected: true },
-  { id: 'cs', icon: 'terminal', label: 'C# Generator', protected: true },
-  { id: 'history', icon: 'history', label: 'History', protected: true },
-  { id: 'divider', isDivider: true },
-  { id: 'bof_static', icon: 'science', label: 'BOF Static Charge', protected: false },
-  { id: 'bof_td', icon: 'monitor_heart', label: 'BOF TD Prediction', protected: false },
-  { id: 'divider2', isDivider: true, label: 'Casting Models' },
-  { id: 'slab_casting', icon: 'view_stream', label: 'Slab Casting', protected: false },
-  { id: 'billet_casting', icon: 'grid_on', label: 'Billet Casting', protected: false },
+  { id: 'chat',           icon: 'chat',          label: 'Chat',             roles: ['admin'] },
+  { id: 'jsx',            icon: 'code',          label: 'JSX Generator',    roles: ['admin'] },
+  { id: 'sql',            icon: 'storage',       label: 'SQL Generator',    roles: ['admin'] },
+  { id: 'cs',             icon: 'terminal',      label: 'C# Generator',     roles: ['admin'] },
+  { id: 'history',        icon: 'history',       label: 'History',          roles: ['admin'] },
+  { id: 'divider',        isDivider: true,       label: 'BOF Models',       roles: ['admin','steel'] },
+  { id: 'bof_static',     icon: 'science',       label: 'BOF Static Charge',roles: ['admin','steel'] },
+  { id: 'bof_td',         icon: 'monitor_heart', label: 'BOF TD Prediction',roles: ['admin','steel'] },
+  { id: 'divider2',       isDivider: true,       label: 'Casting Models',   roles: ['admin','steel'] },
+  { id: 'slab_casting',   icon: 'view_stream',   label: 'Slab Casting',     roles: ['admin','steel'] },
+  { id: 'billet_casting', icon: 'grid_on',       label: 'Billet Casting',   roles: ['admin','steel'] },
 ]
 
 // Material Design colors
@@ -257,7 +257,9 @@ async function runWithRetry(apiKey, messages, setMsg) {
 
 export default function App({ user, onLogout }) {
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [activeTab, setActiveTab] = useState('chat')
+  const [activeTab, setActiveTab] = useState(
+    user?.role === 'steel' ? 'bof_static' : 'chat'
+  )
   const [apiKey, setApiKey] = useState(localStorage.getItem('openrouter_key') || '')
   const [keySet, setKeySet] = useState(!!localStorage.getItem('openrouter_key'))
   const [showKeyDialog, setShowKeyDialog] = useState(false)
@@ -385,7 +387,7 @@ export default function App({ user, onLogout }) {
 
         {/* Nav */}
         <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>
-        {NAV_ITEMS.map(item => {
+        {NAV_ITEMS.filter(item => !item.roles || item.roles.includes(user?.role)).map(item => {
             if (item.isDivider) return (
               <div key={item.id} style={{ margin: '8px 12px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
                 {sidebarOpen && <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '6px 0 2px' }}>{item.label || 'BOF Models'}</div>}
@@ -488,6 +490,15 @@ export default function App({ user, onLogout }) {
         {/* Content */}
         <div style={{ flex: 1, overflow: 'auto', padding: 24 }}>
 
+        {/* Role guard — redirect steel users who somehow land on admin tab */}
+          {user?.role === 'steel' && ['chat','jsx','sql','cs','history'].includes(activeTab) && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 16 }}>
+              <span className="material-icons" style={{ fontSize: 48, color: '#37474F' }}>lock</span>
+              <div style={{ fontSize: 16, fontWeight: 500, color: M.onSurfaceVariant }}>Access Restricted</div>
+              <div style={{ fontSize: 13, color: M.onSurfaceVariant }}>This section is available for Admin users only.</div>
+            </div>
+          )}
+          
           {/* ── CHAT ── */}
           {activeTab === 'chat' && (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 16 }}>
