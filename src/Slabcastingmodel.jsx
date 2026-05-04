@@ -119,9 +119,17 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
     if (running) {
       const dt = 0.016
 
-      sim.moldOsc += sim.moldDir * 0.35; if (Math.abs(sim.moldOsc) > 4) sim.moldDir *= -1
-      sim.rollAngle += speed * 0.08
-      sim.nozzlePulse = (sim.nozzlePulse + 0.12) % (Math.PI * 2)
+      // Only animate mechanical parts when steel is flowing
+      const castingActive = moldLevel > 2 || sim.tundishKg > 100 || sim.slabSegments.length > 0
+      if (castingActive) {
+        sim.moldOsc += sim.moldDir * 0.35; if (Math.abs(sim.moldOsc) > 4) sim.moldDir *= -1
+        sim.rollAngle += speed * 0.08
+        sim.nozzlePulse = (sim.nozzlePulse + 0.12) % (Math.PI * 2)
+      } else {
+        sim.moldOsc *= 0.92  // gradually damp out oscillation
+        // rollAngle fixed — motors stopped
+        // nozzlePulse fixed — no spray
+      }
 
       // LADLE: 250t drains over ~25 min at speed 1.2
       const ladleFlowKgPerSec = sim.ladleKg > 200 ? clamp(speed * 140, 60, 260) : 0
@@ -238,22 +246,23 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
         }
       }
 
-      // ── SPRAY DROPS ───────────────────────────────────────────────────
-      if (sim.drops.length < 140) {
-        const zoneYs = [STR_Y0 + STR_H * 0.08, STR_Y0 + STR_H * 0.32, STR_Y0 + STR_H * 0.58]
-        const pulse = Math.abs(Math.sin(sim.nozzlePulse))
-        zoneYs.forEach(zy => {
-          if (Math.random() < 0.4 * speed * pulse) {
-            sim.drops.push({ x: SCX - SW - 2, y: zy + Math.random() * 30, vx: -2.5 - Math.random() * 2.5, vy: 1.2 + Math.random(), life: 1 })
-            sim.drops.push({ x: SCX + SW + 2, y: zy + Math.random() * 30, vx: 2.5 + Math.random() * 2.5,  vy: 1.2 + Math.random(), life: 1 })
-          }
-        })
-      }
-
-      // Mold cooling water
-      if (sim.frame % 3 === 0) {
-        sim.drops.push({ x: SCX - SW - MWALL, y: MOLD_Y0 + Math.random() * MOLD_H, vx: -1.5 - Math.random(), vy: 0.5 + Math.random() * 0.5, life: 0.7 })
-        sim.drops.push({ x: SCX + SW + MWALL, y: MOLD_Y0 + Math.random() * MOLD_H, vx:  1.5 + Math.random(), vy: 0.5 + Math.random() * 0.5, life: 0.7 })
+      // SPRAY DROPS — only when casting active (strand has metal)
+      if (castingActive) {
+        if (sim.drops.length < 140) {
+          const zoneYs = [STR_Y0 + STR_H * 0.08, STR_Y0 + STR_H * 0.32, STR_Y0 + STR_H * 0.58]
+          const pulse = Math.abs(Math.sin(sim.nozzlePulse))
+          zoneYs.forEach(zy => {
+            if (Math.random() < 0.4 * speed * pulse) {
+              sim.drops.push({ x: SCX - SW - 2, y: zy + Math.random() * 30, vx: -2.5 - Math.random() * 2.5, vy: 1.2 + Math.random(), life: 1 })
+              sim.drops.push({ x: SCX + SW + 2, y: zy + Math.random() * 30, vx: 2.5 + Math.random() * 2.5,  vy: 1.2 + Math.random(), life: 1 })
+            }
+          })
+        }
+        // Mold water cooling — only when mold has steel
+        if (moldHasSteel && sim.frame % 3 === 0) {
+          sim.drops.push({ x: SCX - SW - MWALL, y: MOLD_Y0 + Math.random() * MOLD_H, vx: -1.5 - Math.random(), vy: 0.5 + Math.random() * 0.5, life: 0.7 })
+          sim.drops.push({ x: SCX + SW + MWALL, y: MOLD_Y0 + Math.random() * MOLD_H, vx:  1.5 + Math.random(), vy: 0.5 + Math.random() * 0.5, life: 0.7 })
+        }
       }
     }
 
@@ -317,8 +326,8 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
       ctx.lineTo(SCX + LADLE_W / 2 - 14, ladleSteelTop + ladleSteelH)
       ctx.lineTo(SCX - LADLE_W / 2 + 14, ladleSteelTop + ladleSteelH)
       ctx.closePath(); ctx.fill()
-      // meniscus glow
-      if (running) {
+      // meniscus glow — only when ladle has steel
+      if (running && ladleLevel > 0.01) {
         ctx.fillStyle = `rgba(255,200,50,${0.3 + 0.2 * Math.sin(sim.t * 4)})`
         ctx.fillRect(SCX - LADLE_W / 2 + 14, ladleSteelTop, LADLE_W - 28, 3)
         const gw = ctx.createRadialGradient(SCX, ladleSteelTop, 2, SCX, ladleSteelTop, LADLE_W * 0.55)
@@ -338,7 +347,7 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
     ctx.fillStyle = running && ladleLevel > 0.02 ? '#FF3D00' : '#455A64'; ctx.fill()
 
     // ── LADLE → TUNDISH SHROUD ─────────────────────────────────────────
-    const shroudOpen = running && ladleLevel > 0.02
+    const shroudOpen = running && ladleLevel > 0.02 && sim.ladleKg > 200
     ctx.fillStyle = '#263238'; ctx.fillRect(SCX - 6, LADLE_Y1, 12, TUN_Y0 - LADLE_Y1)
     if (shroudOpen) {
       const flowWidth = clamp(6 * (sim.ladleFlowRate / 300), 2, 9)
@@ -386,7 +395,7 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
       ctx.lineTo(SCX + tunW / 2 - 16, TUN_Y1 - 6)
       ctx.lineTo(SCX - tunW / 2 + 16, TUN_Y1 - 6)
       ctx.closePath(); ctx.fill()
-      if (running) {
+      if (running && tundishLevel > 0.01) {
         ctx.fillStyle = `rgba(255,180,40,${0.25 + 0.15 * Math.sin(sim.t * 3.5)})`
         const tw = tunW - 32 - (1 - tundishLevel) * 16
         ctx.fillRect(SCX - tw / 2, tunSteelTop, tw, 3)
@@ -401,7 +410,7 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
 
     // ── SEN ───────────────────────────────────────────────────────────
     ctx.fillStyle = '#263238'; ctx.fillRect(SCX - 7, SEN_Y0, 14, SEN_H)
-    if (running && tundishLevel > 0.08) {
+    if (running && tundishLevel > 0.08 && moldLevel > 1) {
       const fw = clamp(8 * (sim.tundishFlowRate / 200), 3, 10)
       const sfg = ctx.createLinearGradient(0, SEN_Y0, 0, SEN_Y1)
       sfg.addColorStop(0, 'rgba(255,110,0,0.92)'); sfg.addColorStop(1, 'rgba(255,70,0,0.5)')
@@ -443,8 +452,9 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
     msg.addColorStop(0.4, 'rgba(220,55,0,0.9)')
     msg.addColorStop(1, 'rgba(165,25,0,0.75)')
     ctx.fillStyle = msg; ctx.fillRect(SCX - SW, moldSteelTop, SW * 2, moldSteelH)
-    // Meniscus shimmer
-    if (running) {
+    // Meniscus shimmer — only when casting active
+    const castAct2 = moldLevel > 2 || sim.slabSegments.length > 0
+    if (running && castAct2) {
       ctx.fillStyle = `rgba(255,220,60,${0.4 + 0.25 * Math.sin(sim.t * 5)})`
       ctx.fillRect(SCX - SW, moldSteelTop, SW * 2, 3)
       const mgw = ctx.createRadialGradient(SCX, moldSteelTop, 1, SCX, moldSteelTop, SW * 3)
@@ -456,8 +466,8 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
     ctx.beginPath(); ctx.moveTo(SCX - SW - MWALL, moldSteelTop); ctx.lineTo(SCX + SW + MWALL + 50, moldSteelTop); ctx.stroke()
     ctx.setLineDash([])
     lbl(`${moldLevel.toFixed(1)}%`, SCX + SW + MWALL + 52, moldSteelTop + 4, '#00E5FF', clamp(W * 0.009, 7, 10), 'left')
-    // Oscillation arrows
-    if (running) {
+    // Oscillation arrows — only when casting active
+    if (running && (moldLevel > 2 || sim.slabSegments.length > 0)) {
       const oscDir = sim.moldDir > 0 ? '↑' : '↓'
       ctx.strokeStyle = `rgba(0,188,212,${0.5 + 0.5 * Math.abs(Math.sin(sim.t * 8))})`; ctx.lineWidth = 2
       ctx.beginPath(); ctx.moveTo(SCX - SW - MWALL - 6, MY0); ctx.lineTo(SCX - SW - MWALL - 6, MY1); ctx.stroke()
@@ -534,19 +544,20 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
       ctx.strokeStyle = `rgba(41,182,246,${0.18 + zi * 0.03})`; ctx.lineWidth = 0.8; ctx.setLineDash([3, 4])
       ctx.strokeRect(SCX - SW - 24, z.y0, SW * 2 + 48, z.h); ctx.setLineDash([])
       lbl(z.n, SCX - SW - 26, z.y0 + 10, '#0288D1', clamp(W * 0.009, 7, 9), 'right')
-      if (running) {
-        lbl(`${z.flow.toFixed(0)}L/m`, SCX - SW - 26, z.y0 + 22, '#4FC3F7', clamp(W * 0.009, 7, 9), 'right')
-        // Nozzle boxes with pulsing spray
-        const pulse = 0.5 + 0.5 * Math.sin(sim.nozzlePulse + zi * Math.PI * 0.6)
-        const nozzleYs = [z.y0 + z.h * 0.25, z.y0 + z.h * 0.6]
-        nozzleYs.forEach(ny => {
-          ;[-1, 1].forEach(side => {
-            const nx = side < 0 ? SCX - SW - 14 : SCX + SW + 14
-            // nozzle body
-            ctx.fillStyle = '#1565C0'
-            ctx.fillRect(nx - 4, ny - 4, 8, 8)
-            ctx.strokeStyle = '#29B6F6'; ctx.lineWidth = 0.8; ctx.strokeRect(nx - 4, ny - 4, 8, 8)
-            // spray cone
+      // Zone labels always visible
+      if (running) lbl(`${z.flow.toFixed(0)}L/m`, SCX - SW - 26, z.y0 + 22, '#4FC3F7', clamp(W * 0.009, 7, 9), 'right')
+      // Nozzle boxes — always draw hardware
+      const nozzleYs2 = [z.y0 + z.h * 0.25, z.y0 + z.h * 0.6]
+      nozzleYs2.forEach(ny => {
+        ;[-1, 1].forEach(side => {
+          const nx = side < 0 ? SCX - SW - 14 : SCX + SW + 14
+          const castAct = moldLevel > 2 || sim.slabSegments.length > 0
+          ctx.fillStyle = castAct ? '#1565C0' : '#0d2030'
+          ctx.fillRect(nx - 4, ny - 4, 8, 8)
+          ctx.strokeStyle = castAct ? '#29B6F6' : '#1a3040'; ctx.lineWidth = 0.8; ctx.strokeRect(nx - 4, ny - 4, 8, 8)
+          // Spray cones — only when casting active
+          if (castAct) {
+            const pulse = 0.5 + 0.5 * Math.sin(sim.nozzlePulse + zi * Math.PI * 0.6)
             const sprayLen = 14 + 8 * pulse
             for (let ai = -3; ai <= 3; ai++) {
               const angle = side * Math.PI / 2 + ai * 0.2
@@ -556,9 +567,9 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
               ctx.strokeStyle = `rgba(41,182,246,${alpha})`; ctx.lineWidth = 1
               ctx.beginPath(); ctx.moveTo(nx, ny); ctx.lineTo(ex, ey); ctx.stroke()
             }
-          })
+          }
         })
-      }
+      })
     })
 
     // Spray drops
@@ -580,7 +591,7 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
         ctx.strokeStyle = '#546E7A'; ctx.lineWidth = 1
         ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
         ctx.fillStyle = '#37474F'; ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI * 2); ctx.fill()
-        if (running) {
+        if (running && (moldLevel > 2 || sim.slabSegments.length > 0)) {
           ctx.strokeStyle = 'rgba(84,110,122,0.55)'; ctx.lineWidth = 1
           ;[0, 1, 2].forEach(k => {
             const a = k * Math.PI * 2 / 3
@@ -616,7 +627,7 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
       const angle = -Math.PI + bi * Math.PI / 8
       const brx = BEND_CX + BEND_R * Math.cos(angle)
       const bry = BEND_CY + BEND_R * Math.sin(angle)
-      ctx.save(); ctx.translate(brx, bry); ctx.rotate(running ? sim.rollAngle * 0.7 : 0)
+      ctx.save(); ctx.translate(brx, bry); ctx.rotate(running && (moldLevel > 2 || sim.slabSegments.length > 0) ? sim.rollAngle * 0.7 : 0)
       ctx.fillStyle = running ? '#2c3e50' : '#1a2535'; ctx.strokeStyle = '#546E7A'; ctx.lineWidth = 0.8
       ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
       ctx.restore()
@@ -633,8 +644,9 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
 
     // Runout rollers
     const RSTEP = clamp(W * 0.032, 20, 38)
+    const runoutActive = sim.runoutSlabs.length > 0 || (sim.slabBeingCast && sim.slabBeingCast.len > 2)
     for (let rx = RUN_X0 + RSTEP / 2; rx < RUN_X1; rx += RSTEP) {
-      ctx.save(); ctx.translate(rx, RUN_Y + RUN_H / 2); ctx.rotate(running ? sim.rollAngle * 0.65 : 0)
+      ctx.save(); ctx.translate(rx, RUN_Y + RUN_H / 2); ctx.rotate(running && runoutActive ? sim.rollAngle * 0.65 : 0)
       ctx.fillStyle = running ? '#1e2d3d' : '#111820'; ctx.strokeStyle = '#2a3d52'; ctx.lineWidth = 0.8
       ctx.beginPath(); ctx.arc(0, 0, RUN_H * 0.38, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
       ctx.fillStyle = '#253545'; ctx.beginPath(); ctx.arc(0, 0, RUN_H * 0.13, 0, Math.PI * 2); ctx.fill()
@@ -804,7 +816,7 @@ function CastingCanvas({ running, speed, tundishTemp, moldLevel, setMoldLevel, s
       ['Z2 WATER', running ? `${(speed * 56).toFixed(0)} L/m` : '--', '#4FC3F7'],
       ['Z3 WATER', running ? `${(speed * 40).toFixed(0)} L/m` : '--', '#81D4FA'],
       ['SLABS CUT', `${sim.slabsCut}`, '#9b5de5'],
-      ['STATUS', running ? 'CASTING ●' : 'STANDBY ○', running ? '#57ab5a' : '#546E7A'],
+      ['STATUS', !running ? 'STANDBY ○' : (moldLevel > 2 || sim.slabSegments.length > 0) ? 'CASTING ●' : 'CAST COMPLETE ✓', !running ? '#546E7A' : (moldLevel > 2 || sim.slabSegments.length > 0) ? '#57ab5a' : '#FFB300'],
     ]
     rows.forEach(([l, v, c], i) => {
       const ry = HY2 + 20 + i * RH2
