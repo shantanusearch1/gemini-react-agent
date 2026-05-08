@@ -24,9 +24,18 @@ function BlastFurnaceCanvas({
     t: 0, frame: 0,
     bfTemp: 1520, ironTemp: 1490, slagTemp: 1480,
     topGasTemp: 220, gasUtil: 48, productionRate: 0,
-    burdenOffset: 0, burdenLayers: [],
+    burdenOffset: 0,
+    // Each burden layer: {type:'ore'|'coke'|'flux', y, thickness, temp, phase:0=solid,1=softening,2=melting,3=liquid, meltFrac:0-1, gasEmit:0-1}
+    burdenLayers: [],
+    chargeTimer: 0,
     tuyerePulse: 0, tuyereFlames: [], raceways: [],
-    gasParticles: [], ironLevel: 0.35, slagLevel: 0.15,
+    // Gas particles: {x,y,vx,vy,life,r,type:'co'|'co2'|'steam', col}
+    gasParticles: [],
+    // CO gas rising from tuyere zone
+    coGas: [],
+    // Steam from upper zones
+    steamPuffs: [],
+    ironLevel: 0.35, slagLevel: 0.15,
     tapping: false, tapIron: false, tapSlag: false,
     tapTimer: 0, nextTapIn: 60, ironCast: 0, slagCast: 0,
     torpedoLadles: [], slagPots: [],
@@ -49,8 +58,8 @@ function BlastFurnaceCanvas({
     Object.assign(sim, {
       t:0, frame:0, bfTemp:1520, ironTemp:1490, slagTemp:1480,
       topGasTemp:220, gasUtil:48, productionRate:0,
-      burdenOffset:0, burdenLayers:[], tuyerePulse:0,
-      tuyereFlames:[], raceways:[], gasParticles:[],
+      burdenOffset:0, burdenLayers:[], chargeTimer:0, tuyerePulse:0,
+      tuyereFlames:[], raceways:[], gasParticles:[], coGas:[], steamPuffs:[],
       ironLevel:0.35, slagLevel:0.15,
       tapping:false, tapIron:false, tapSlag:false,
       tapTimer:0, nextTapIn:60, ironCast:0, slagCast:0,
@@ -119,17 +128,103 @@ function BlastFurnaceCanvas({
       sim.productionRate = clamp(sim.productionRate+(tgtProd-sim.productionRate)*0.004, 0, 8000)
       setProductionRate(Math.round(sim.productionRate))
 
-      // Burden descent
-      sim.burdenOffset = (sim.burdenOffset + intensity*0.5) % 50
-      if (sim.burdenLayers.length < 14) {
-        const types = ['ore','ore','coke','flux','ore','coke']
-        sim.burdenLayers.push({
-          type: types[sim.frame % types.length],
-          y: BF_TOP + 25,
-          thickness: 16 + Math.random()*10
+      // ── BURDEN DESCENT + PHASE CHANGE ─────────────────────────────────
+      // Charge new layers at throat every ~90 frames
+      sim.chargeTimer += 1
+      const chargeInterval = Math.round(90 / Math.max(intensity, 0.1))
+      if (sim.chargeTimer >= chargeInterval && sim.burdenLayers.length < 22) {
+        sim.chargeTimer = 0
+        // Alternate: 2 ore : 1 coke : 0.5 flux (realistic BF burden sequence)
+        const seq = ['ore','ore','coke','ore','flux','ore','coke']
+        const t = seq[sim.frame % seq.length]
+        // Each layer has thickness proportional to material
+        const thick = t==='coke' ? 22+Math.random()*10 : t==='ore' ? 18+Math.random()*8 : 12+Math.random()*6
+        sim.burdenLayers.unshift({
+          type: t, y: BF_TOP + 28, thickness: thick,
+          temp: 25 + Math.random()*20,   // ambient start
+          phase: 0, meltFrac: 0,         // solid, not melting
+          gasEmit: 0, width: 0.92,       // relative to furnace width at that Y
         })
+        // Open bell when charging
+        sim.bellOpen = true; sim.bellTimer = 40
       }
-      sim.burdenLayers = sim.burdenLayers.map(l=>({...l, y: l.y+intensity*0.45})).filter(l=>l.y<TUYERE_Y)
+
+      // Descend and heat each layer based on its Y position in furnace
+      const dt2 = 0.016
+      sim.burdenLayers = sim.burdenLayers.map(layer => {
+        const newY = layer.y + intensity * 0.38
+        const yFrac = clamp((newY - BF_TOP) / (BF_H), 0, 1)
+
+        // Temperature profile: ambient→1650°C from top to bottom
+        // Upper shaft 200°C, lower shaft 600°C, cohesive 1100°C, bosh 1800°C+
+        let zoneTemp
+        if (yFrac < 0.10) zoneTemp = 100 + yFrac*10 * 1200
+        else if (yFrac < 0.28) zoneTemp = 200  + (yFrac-0.10)/0.18 * 400
+        else if (yFrac < 0.46) zoneTemp = 600  + (yFrac-0.28)/0.18 * 450
+        else if (yFrac < 0.58) zoneTemp = 1050 + (yFrac-0.46)/0.12 * 150
+        else if (yFrac < 0.68) zoneTemp = 1200 + (yFrac-0.58)/0.10 * 250
+        else zoneTemp = 1450 + (yFrac-0.68)/0.32 * 350
+
+        // Lag: material heats up toward zone temperature
+        const heatRate = layer.type==='coke' ? 0.012 : 0.009  // coke heats faster (thinner)
+        const newTemp = layer.temp + (zoneTemp - layer.temp) * heatRate * intensity
+
+        // Phase determination based on type + temperature
+        let newPhase = layer.phase
+        let newMelt  = layer.meltFrac
+        let newGas   = layer.gasEmit
+
+        if (layer.type === 'ore') {
+          // Ore: solid <900°C, softening 900-1150°C, melting 1150-1400°C, liquid >1400°C
+          if (newTemp < 900)        { newPhase = 0; newMelt = 0 }
+          else if (newTemp < 1150)  { newPhase = 1; newMelt = (newTemp-900)/250 }
+          else if (newTemp < 1400)  { newPhase = 2; newMelt = 0.5 + (newTemp-1150)/500 }
+          else                      { newPhase = 3; newMelt = 1.0 }
+          // Water evaporation + ore reduction CO2 emission 300-900°C
+          newGas = newTemp > 300 && newTemp < 1100 ? clamp((newTemp-300)/800, 0, 1)*0.8 : newTemp > 1100 ? 0.3 : 0
+        } else if (layer.type === 'coke') {
+          // Coke: solid all way, but chars and gasifies in raceway
+          if (newTemp < 500)        { newPhase = 0; newMelt = 0 }
+          else if (newTemp < 1000)  { newPhase = 0; newMelt = 0 }
+          else                      { newPhase = 0; newMelt = 0 }  // coke stays solid
+          // CO2 + C → 2CO gasification starts above 700°C
+          newGas = newTemp > 700 ? clamp((newTemp-700)/800, 0, 1)*0.65 : 0
+        } else {  // flux limestone
+          // CaCO3 → CaO + CO2 decomposition at 850°C
+          if (newTemp < 750)        { newPhase = 0; newMelt = 0 }
+          else if (newTemp < 900)   { newPhase = 1; newMelt = (newTemp-750)/150; newGas = (newTemp-750)/150 }
+          else if (newTemp < 1300)  { newPhase = 2; newMelt = 0.4+(newTemp-900)/1000 }
+          else                      { newPhase = 3; newMelt = 1.0 }
+          newGas = newTemp > 750 && newTemp < 1000 ? (newTemp-750)/250 : 0.15
+        }
+
+        // Emit gas particles from this layer
+        const gasEmitRate = newGas * intensity * 0.4
+        if (Math.random() < gasEmitRate && running) {
+          const hw2 = bfHW(clamp((newY-BF_TOP)/BF_H,0,1)) * layer.width
+          const isC2 = layer.type==='ore' || layer.type==='flux'
+          sim.coGas.push({
+            x: BF_CX + (Math.random()-0.5)*hw2*1.6,
+            y: newY + layer.thickness*0.5,
+            vx: (Math.random()-0.5)*0.7,
+            vy: -(0.8+Math.random()*1.8)*intensity,
+            life: 1,
+            r: 1.5 + Math.random()*2.5,
+            type: isC2 ? 'co2' : 'co',
+            col: isC2 ? 'rgba(120,160,80,0.55)' : 'rgba(165,145,65,0.50)',
+          })
+        }
+        // Steam from moisture 100-300°C in ore
+        if (layer.type==='ore' && newTemp > 80 && newTemp < 320 && Math.random()<0.08*intensity) {
+          sim.steamPuffs.push({
+            x: BF_CX+(Math.random()-0.5)*bfHW(clamp((newY-BF_TOP)/BF_H,0,1))*0.9,
+            y: newY, vx:(Math.random()-0.5)*0.8, vy:-0.7-Math.random()*1.2,
+            life:1, r:2+Math.random()*3
+          })
+        }
+
+        return { ...layer, y: newY, temp: newTemp, phase: newPhase, meltFrac: newMelt, gasEmit: newGas }
+      }).filter(l => l.y < TUYERE_Y + l.thickness)  // remove layers that reach tuyere
 
       // Tuyere blast
       sim.tuyerePulse = (sim.tuyerePulse + 0.20*(windRate/100)) % (Math.PI*2)
@@ -153,15 +248,17 @@ function BlastFurnaceCanvas({
         r:8+Math.random()*14, life:1
       })
 
-      // Gas particles rising inside BF
-      if (sim.gasParticles.length < 90) {
-        sim.gasParticles.push({
-          x:BF_CX+(Math.random()-0.5)*bfHW(0.75)*1.1,
-          y:TUYERE_Y-8,
-          vx:(Math.random()-0.5)*0.9,
-          vy:-(1.4+Math.random()*2.2)*(windRate/100)*0.85,
-          life:1, r:1.5+Math.random()*2.5,
-          col:`rgba(${180+Math.round(Math.random()*55)},${155+Math.round(Math.random()*55)},75,0.5)`
+      // Primary CO gas from combustion zone rising up through furnace
+      if (sim.coGas.length < 80) {
+        const hw3 = bfHW(0.74)
+        sim.coGas.push({
+          x: BF_CX + (Math.random()-0.5)*hw3*1.5,
+          y: TUYERE_Y - 12,
+          vx: (Math.random()-0.5)*0.85,
+          vy: -(1.2+Math.random()*2.4)*(windRate/100)*0.8,
+          life: 1, r: 1.8+Math.random()*3.0,
+          type: 'co',
+          col: `rgba(${165+Math.round(Math.random()*45)},${140+Math.round(Math.random()*40)},55,0.48)`
         })
       }
 
@@ -229,7 +326,18 @@ function BlastFurnaceCanvas({
     // Update particles
     sim.tuyereFlames   = sim.tuyereFlames.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.055}))
     sim.raceways       = sim.raceways.filter(p=>p.life>0).map(p=>({...p,life:p.life-0.038}))
-    sim.gasParticles   = sim.gasParticles.filter(p=>p.life>0&&p.y>BF_TOP).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.011}))
+    // CO gas rises and slows as it reacts with ore (CO2 at top)
+    sim.coGas          = sim.coGas.filter(p=>p.life>0&&p.y>BF_TOP-10).map(p=>{
+      const yFrac = clamp((p.y-BF_TOP)/BF_H,0,1)
+      const slowDown = 1 - yFrac*0.35   // slows in upper zones as CO reacts
+      return {...p, x:p.x+p.vx, y:p.y+p.vy*slowDown, life:p.life-0.008,
+        // Color shifts: CO (yellow-brown) → CO2 (greenish) as it rises and reacts
+        col: p.y < BF_TOP+BF_H*0.4
+          ? `rgba(120,155,70,${p.life*0.48})`   // CO2 upper zone
+          : `rgba(165,140,50,${p.life*0.52})`   // CO lower zone
+      }
+    })
+    sim.steamPuffs     = sim.steamPuffs.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,r:p.r+0.3,life:p.life-0.020}))
     sim.topGasParticles= sim.topGasParticles.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.022}))
     sim.dustParticles  = sim.dustParticles.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.016}))
 
@@ -322,20 +430,140 @@ function BlastFurnaceCanvas({
     zGrd.addColorStop(1.00,`rgba(255,${95+Math.round(35*Math.sin(sim.t*1.1))},0,0.98)`)
     ctx.fillStyle=zGrd; ctx.fillRect(0,BF_TOP,W,BF_H)
 
-    // Burden layers
-    sim.burdenLayers.forEach(layer=>{
-      const yf=clamp((layer.y-BF_TOP)/BF_H,0,0.95)
-      const hw=bfHW(yf)-5
-      const layerCols={ore:'rgba(140,55,15,0.52)',coke:'rgba(22,22,22,0.58)',flux:'rgba(88,112,72,0.48)'}
-      ctx.fillStyle=layerCols[layer.type]||'rgba(70,70,70,0.4)'
-      ctx.fillRect(BF_CX-hw,layer.y,hw*2,layer.thickness)
+    // ── BURDEN LAYERS with phase, temperature heat map, material color ──
+    sim.burdenLayers.forEach(layer => {
+      const yf  = clamp((layer.y - BF_TOP) / BF_H, 0, 0.98)
+      const hw  = (bfHW(yf) - 4) * (layer.width || 0.92)
+      const lx  = BF_CX - hw, lw = hw * 2, lt = layer.thickness
+
+      // Base material color (solid state)
+      const matCols = {
+        ore:  [155, 62, 18],    // iron ore: rusty orange-brown
+        coke: [32,  32, 32],    // coke: very dark grey
+        flux: [95,  118, 72],   // limestone flux: olive-grey
+      }
+      const [mr, mg, mb] = matCols[layer.type] || [80,80,80]
+      const mf = layer.meltFrac  // 0=solid, 1=fully liquid
+
+      if (layer.phase === 0) {
+        // ── SOLID: draw as textured granular material ─────────────────
+        ctx.fillStyle = `rgba(${mr},${mg},${mb},0.82)`
+        ctx.fillRect(lx, layer.y, lw, lt)
+        // Granular texture (dots) - different for each material
+        if (layer.type === 'ore') {
+          // Ore: reddish-brown lumps
+          for (let tx2 = lx+4; tx2 < lx+lw-4; tx2 += 10) {
+            ctx.fillStyle = `rgba(${mr+20},${mg+8},${mb+5},0.6)`
+            ctx.beginPath(); ctx.arc(tx2+(Math.sin(tx2)*3), layer.y+lt*0.4, 3.5, 0, Math.PI*2); ctx.fill()
+            ctx.fillStyle = `rgba(${mr-20},${mg-10},${mb-5},0.5)`
+            ctx.beginPath(); ctx.arc(tx2+(Math.cos(tx2)*4), layer.y+lt*0.7, 2.5, 0, Math.PI*2); ctx.fill()
+          }
+        } else if (layer.type === 'coke') {
+          // Coke: angular dark chunks with bright edges
+          for (let tx2 = lx+3; tx2 < lx+lw-3; tx2 += 12) {
+            ctx.fillStyle = 'rgba(55,55,55,0.7)'
+            ctx.fillRect(tx2, layer.y+2, 9, lt-4)
+            ctx.strokeStyle = 'rgba(88,88,88,0.4)'; ctx.lineWidth = 0.6
+            ctx.strokeRect(tx2, layer.y+2, 9, lt-4)
+          }
+        } else {
+          // Flux: smoother pale grey lumps
+          for (let tx2 = lx+5; tx2 < lx+lw-5; tx2 += 14) {
+            ctx.fillStyle = `rgba(${mr+15},${mg+15},${mb+10},0.55)`
+            ctx.beginPath(); ctx.arc(tx2, layer.y+lt*0.5, 4, 0, Math.PI*2); ctx.fill()
+          }
+        }
+      } else if (layer.phase === 1) {
+        // ── SOFTENING: material darkening, edges starting to glow ────
+        const softHeatCol = heatColor(layer.temp, 600, 1600)
+        ctx.fillStyle = `rgba(${mr},${Math.round(mg*0.7)},${Math.round(mb*0.5)},0.85)`
+        ctx.fillRect(lx, layer.y, lw, lt)
+        // Heat glow at edges
+        const egrd = ctx.createLinearGradient(lx, 0, lx+lw, 0)
+        egrd.addColorStop(0, softHeatCol.replace(/[\d.]+\)$/, '0.45)'))
+        egrd.addColorStop(0.5, 'rgba(255,80,0,0.05)')
+        egrd.addColorStop(1, softHeatCol.replace(/[\d.]+\)$/, '0.45)'))
+        ctx.fillStyle = egrd; ctx.fillRect(lx, layer.y, lw, lt)
+        // Top surface glow
+        const tgrd = ctx.createLinearGradient(0, layer.y, 0, layer.y+lt)
+        tgrd.addColorStop(0, softHeatCol.replace(/[\d.]+\)$/, '0.35)'))
+        tgrd.addColorStop(1, 'rgba(255,80,0,0.05)')
+        ctx.fillStyle = tgrd; ctx.fillRect(lx, layer.y, lw, lt)
+      } else if (layer.phase === 2) {
+        // ── MELTING: mushy zone, solid+liquid mix, bright heat map ───
+        // Solid part
+        const solidH = lt * (1 - mf)
+        ctx.fillStyle = `rgba(${mr},${Math.round(mg*0.6)},${Math.round(mb*0.4)},0.75)`
+        ctx.fillRect(lx, layer.y, lw, solidH)
+        // Liquid part dripping
+        const liqGrd = ctx.createLinearGradient(0, layer.y+solidH, 0, layer.y+lt)
+        liqGrd.addColorStop(0, heatColor(layer.temp, 800, 1600))
+        liqGrd.addColorStop(1, layer.type==='ore'?'rgba(220,50,0,0.92)':'rgba(90,110,55,0.82)')
+        ctx.fillStyle = liqGrd; ctx.fillRect(lx, layer.y+solidH, lw, lt-solidH)
+        // Drips falling from bottom
+        if (running) {
+          for (let dx = lx+8; dx < lx+lw-8; dx+=18) {
+            const dripLen = (mf*8) + Math.sin(sim.t*4+dx)*3
+            ctx.fillStyle = layer.type==='ore'?`rgba(255,60,0,0.7)`:`rgba(90,115,45,0.65)`
+            ctx.beginPath(); ctx.ellipse(dx, layer.y+lt+dripLen/2, 2, dripLen/2, 0, 0, Math.PI*2); ctx.fill()
+          }
+        }
+        // Bright heat glow
+        const hg = ctx.createRadialGradient(BF_CX, layer.y+lt/2, 2, BF_CX, layer.y+lt/2, hw*0.8)
+        hg.addColorStop(0, `rgba(255,${Math.round(80+mf*80)},0,${0.15+mf*0.12})`)
+        hg.addColorStop(1, 'rgba(255,60,0,0)')
+        ctx.fillStyle = hg; ctx.fillRect(lx-10, layer.y, lw+20, lt)
+      } else {
+        // ── FULLY LIQUID: just heat map glow, no solid structure ─────
+        // (liquid ore becomes iron+slag, drains into hearth)
+        const liqGrd2 = ctx.createLinearGradient(0, layer.y, 0, layer.y+lt)
+        liqGrd2.addColorStop(0, layer.type==='ore'?`rgba(255,${55+Math.round(25*Math.sin(sim.t*3))},0,0.82)`:'rgba(95,118,48,0.78)')
+        liqGrd2.addColorStop(1, layer.type==='ore'?'rgba(195,30,0,0.65)':'rgba(70,92,32,0.62)')
+        ctx.fillStyle = liqGrd2; ctx.fillRect(lx, layer.y, lw, lt*0.7)
+        // Liquid bright glow
+        if (running) {
+          const lg2 = ctx.createRadialGradient(BF_CX, layer.y+lt*0.3, 1, BF_CX, layer.y+lt*0.3, hw)
+          lg2.addColorStop(0, layer.type==='ore'?'rgba(255,110,0,0.22)':'rgba(110,140,55,0.18)')
+          lg2.addColorStop(1, 'rgba(255,60,0,0)')
+          ctx.fillStyle = lg2; ctx.fillRect(lx-5, layer.y-2, lw+10, lt+4)
+        }
+      }
+
+      // ── HEAT MAP OVERLAY on all layers ───────────────────────────────
+      if (layer.temp > 200) {
+        const hmCol = heatColor(layer.temp, 200, 1600)
+        const hmAlpha = clamp((layer.temp-200)/1200 * 0.32, 0, 0.32)
+        ctx.fillStyle = hmCol.replace(/[\d.]+\)$/, `${hmAlpha})`)
+        ctx.fillRect(lx, layer.y, lw, lt)
+      }
+
+      // ── MATERIAL LABEL (small, right edge) ───────────────────────────
+      const matShort = {ore:'ORE', coke:'COKE', flux:'FLUX'}
+      const matLabelCol = {ore:'rgba(200,110,50,0.55)', coke:'rgba(100,100,100,0.55)', flux:'rgba(130,150,90,0.55)'}
+      if (lt > 8) {
+        ctx.fillStyle = matLabelCol[layer.type]; ctx.font=`${clamp(lw*0.06,6,7.5)}px monospace`; ctx.textAlign='right'
+        ctx.fillText(matShort[layer.type], lx+lw-3, layer.y+lt*0.62)
+        if (layer.temp > 100) {
+          ctx.fillStyle='rgba(255,255,255,0.18)'; ctx.font=`${clamp(lw*0.055,5,7)}px monospace`
+          ctx.fillText(`${Math.round(layer.temp)}°`, lx+lw-3, layer.y+lt*0.62+8)
+        }
+      }
     })
     ctx.restore()
 
-    // Gas particles
-    sim.gasParticles.forEach(p=>{
-      ctx.globalAlpha=p.life*0.52; ctx.fillStyle=p.col
-      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
+    // ── CO/CO2 GAS RISING THROUGH FURNACE ───────────────────────────────
+    sim.coGas.forEach(p=>{
+      ctx.globalAlpha = p.life * 0.52; ctx.fillStyle = p.col
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill()
+      // Slight trail
+      ctx.globalAlpha = p.life * 0.18; ctx.fillStyle = p.col
+      ctx.beginPath(); ctx.arc(p.x - p.vx, p.y - p.vy*0.6, p.r*0.55, 0, Math.PI*2); ctx.fill()
+    }); ctx.globalAlpha=1
+    // ── STEAM PUFFS from ore moisture evaporation ────────────────────
+    sim.steamPuffs.forEach(p=>{
+      ctx.globalAlpha = p.life * 0.22
+      ctx.fillStyle = `rgba(200,215,230,0.9)`
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill()
     }); ctx.globalAlpha=1
 
     // Raceway glows
@@ -533,23 +761,45 @@ function BlastFurnaceCanvas({
       ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
     }); ctx.globalAlpha=1
 
-    // ── BF ZONE LABELS ────────────────────────────────────────────────────
+    // ── FURNACE ZONES with temp + phase + gas annotations ───────────────
     const zones=[
-      {yf:0.08, lab:'THROAT  / STACK',   tempC:350},
-      {yf:0.24, lab:'UPPER SHAFT',       tempC:650},
-      {yf:0.44, lab:'LOWER SHAFT',       tempC:1050},
-      {yf:0.54, lab:'THERMAL RESERVE',   tempC:1150},
-      {yf:0.63, lab:'COHESIVE ZONE',     tempC:1280},
-      {yf:0.72, lab:'BOSH / RACEWAY',    tempC:1950},
-      {yf:0.86, lab:'HEARTH',            tempC:1490},
+      {yf:0.00,lab:'THROAT',         note:'Charge input',        tempC:100,  col:'rgba(100,160,200,0.18)'},
+      {yf:0.10,lab:'UPPER SHAFT',    note:'H2O evap, ore heat',  tempC:350,  col:'rgba(130,170,90,0.12)'},
+      {yf:0.28,lab:'LOWER SHAFT',    note:'Indirect reduction',  tempC:700,  col:'rgba(160,100,30,0.12)'},
+      {yf:0.46,lab:'THERMAL RESERVE',note:'CO equilibrium',      tempC:1050, col:'rgba(190,80,20,0.14)'},
+      {yf:0.58,lab:'COHESIVE ZONE',  note:'Ore softens & melts', tempC:1200, col:'rgba(220,60,0,0.16)'},
+      {yf:0.68,lab:'BOSH/RACEWAY',   note:'C combustion 2000C+', tempC:1950, col:'rgba(255,120,0,0.20)'},
+      {yf:0.80,lab:'HEARTH',         note:'Fe + slag pool',      tempC:1490, col:'rgba(255,60,0,0.16)'},
     ]
-    zones.forEach(z=>{
+    zones.forEach((z,zi)=>{
       const y=BF_TOP+BF_H*z.yf, hw=bfHW(z.yf)
-      ctx.strokeStyle='rgba(255,255,255,0.04)'; ctx.lineWidth=0.5; ctx.setLineDash([3,5])
+      // Zone background tint
+      if(zi<zones.length-1){
+        const nextY=BF_TOP+BF_H*zones[zi+1].yf
+        const zgrd=ctx.createLinearGradient(0,y,0,nextY)
+        zgrd.addColorStop(0,z.col); zgrd.addColorStop(1,'rgba(0,0,0,0)')
+        ctx.fillStyle=zgrd
+        ctx.save()
+        ctx.beginPath()
+        for(let sy=y;sy<=nextY;sy+=4){const syf=clamp((sy-BF_TOP)/BF_H,0,1); ctx.lineTo(BF_CX-bfHW(syf),sy)}
+        for(let sy=nextY;sy>=y;sy-=4){const syf=clamp((sy-BF_TOP)/BF_H,0,1); ctx.lineTo(BF_CX+bfHW(syf),sy)}
+        ctx.closePath(); ctx.fill(); ctx.restore()
+      }
+      // Dashed zone line
+      ctx.strokeStyle='rgba(255,255,255,0.07)'; ctx.lineWidth=0.6; ctx.setLineDash([3,5])
       ctx.beginPath(); ctx.moveTo(BF_CX-hw,y); ctx.lineTo(BF_CX+hw,y); ctx.stroke()
       ctx.setLineDash([])
-      lbl(z.lab,BF_CX-hw-5,y+3,'rgba(255,255,255,0.11)',clamp(W*0.008,6,8),'right')
+      // Zone name (left)
+      lbl(z.lab,  BF_CX-hw-5,y+4,  'rgba(255,255,255,0.16)',clamp(W*0.008,6,8),'right')
+      lbl(z.note, BF_CX-hw-5,y+13, 'rgba(255,255,255,0.08)',clamp(W*0.007,5,7),'right')
+      // Temperature (right)
+      lbl('~'+z.tempC+'C', BF_CX+hw+5,y+5, heatColor(z.tempC,100,2000),clamp(W*0.008,6,8),'left')
     })
+    // Gas annotation
+    if(running){
+      lbl('CO/CO2 up', BF_CX+bfHW(0.35)+10,BF_TOP+BF_H*0.32,'rgba(150,170,75,0.50)',clamp(W*0.009,6,8),'left')
+      lbl('steam',     BF_CX-bfHW(0.12)-10,BF_TOP+BF_H*0.12,'rgba(180,210,230,0.40)',clamp(W*0.009,6,8),'right')
+    }
     lbl('BLAST FURNACE',BF_CX,BF_TOP-38,'#90A4AE',clamp(W*0.013,10,16))
     lbl(`${Math.round(sim.bfTemp)}°C`,BF_CX,BF_TOP-22,running?'#FF8F00':'#546E7A',clamp(W*0.010,8,11))
 
