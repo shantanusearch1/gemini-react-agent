@@ -3,6 +3,7 @@ import BOFStaticChargeModel from './BOFStaticChargeModel.jsx'
 import BOFRealTimeTDModel from './BOFRealTimeTDModel.jsx'
 import SlabCastingModel from './Slabcastingmodel.jsx'
 import BilletCastingModel from './BilletCastingModel.jsx'
+import IronMakingModel from './IronMakingModel.jsx'
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
@@ -724,7 +725,14 @@ export default function App({ user, onLogout }) {
               <BilletCastingModel />
             </div>
           )}
-
+          
+         {/* Iron Making Model */}
+          {activeTab === 'iron_making' && (
+            <div style={{ margin: -24 }}>
+              <IronMakingModel />
+            </div>
+          )}
+                     
           {/* ── HISTORY ── */}
           {activeTab === 'history' && (
             <div style={{ maxWidth: 860 }}>
