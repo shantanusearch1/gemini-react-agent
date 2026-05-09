@@ -20,6 +20,7 @@ function BlastFurnaceCanvas({
 }) {
   const canvasRef = useRef(null)
   const rafRef    = useRef(null)
+  const mouseRef  = useRef({ x: -999, y: -999 })
   const S = useRef({
     t: 0, frame: 0,
     bfTemp: 1520, ironTemp: 1490, slagTemp: 1480,
@@ -49,7 +50,33 @@ function BlastFurnaceCanvas({
     const el = canvasRef.current; if (!el) return
     const fit = () => { el.width = el.parentElement.clientWidth; el.height = el.parentElement.clientHeight }
     fit(); window.addEventListener('resize', fit)
-    return () => window.removeEventListener('resize', fit)
+    const onMove = (e) => {
+      const rect = el.getBoundingClientRect()
+      const scaleX = el.width / rect.width
+      const scaleY = el.height / rect.height
+      mouseRef.current = {
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top)  * scaleY
+      }
+    }
+    const onLeave = () => { mouseRef.current = { x: -999, y: -999 } }
+    el.addEventListener('mousemove', onMove)
+    el.addEventListener('mouseleave', onLeave)
+    // Touch support for mobile/APK
+    el.addEventListener('touchmove', (e) => {
+      e.preventDefault()
+      const t = e.touches[0]
+      const rect = el.getBoundingClientRect()
+      const scaleX = el.width / rect.width
+      const scaleY = el.height / rect.height
+      mouseRef.current = { x: (t.clientX - rect.left) * scaleX, y: (t.clientY - rect.top) * scaleY }
+    }, { passive: false })
+    el.addEventListener('touchend', onLeave)
+    return () => {
+      window.removeEventListener('resize', fit)
+      el.removeEventListener('mousemove', onMove)
+      el.removeEventListener('mouseleave', onLeave)
+    }
   }, [])
 
   useEffect(() => {
@@ -851,6 +878,181 @@ function BlastFurnaceCanvas({
       ctx.fillStyle='#4d7a9a'; ctx.font=`${clamp(W*0.009,6,9)}px monospace`; ctx.textAlign='left'; ctx.fillText(l,px,H*0.012)
       ctx.fillStyle=c; ctx.font=`bold ${clamp(W*0.010,7,10)}px monospace`; ctx.fillText(v,px,H*0.023)
     })
+
+    // ── TOOLTIP SYSTEM ────────────────────────────────────────────────────
+    const mx = mouseRef.current.x, my = mouseRef.current.y
+    let tooltip = null
+
+    // Hit test: burden layers
+    sim.burdenLayers.forEach(layer => {
+      const yf = clamp((layer.y - BF_TOP) / BF_H, 0, 0.98)
+      const hw  = (bfHW(yf) - 4) * (layer.width || 0.92)
+      if (mx >= BF_CX-hw && mx <= BF_CX+hw && my >= layer.y && my <= layer.y+layer.thickness) {
+        const phaseNames  = ['SOLID', 'SOFTENING', 'MELTING', 'LIQUID']
+        const phaseColors = ['#78909C', '#FF8F00', '#FF5722', '#FF1744']
+        const matInfo = {
+          ore:  { full:'Iron Ore (Fe₂O₃)',   color:'#BF6030', reaction:'Fe₂O₃ + 3CO → 2Fe + 3CO₂', notes:'Indirect reduction by CO gas' },
+          coke: { full:'Metallurgical Coke', color:'#607D8B', reaction:'C + O₂ → CO₂  then CO₂+C → 2CO', notes:'Fuel + structural support + reductant' },
+          flux: { full:'Limestone (CaCO₃)',  color:'#7C9060', reaction:'CaCO₃ → CaO + CO₂  (>750°C)', notes:'Slag former, removes SiO₂, S, P' },
+        }
+        const mi = matInfo[layer.type] || matInfo.ore
+        const ph = phaseNames[layer.phase] || 'SOLID'
+        const pc = phaseColors[layer.phase] || '#78909C'
+        tooltip = {
+          title: mi.full,
+          color: mi.color,
+          lines: [
+            { label:'Temperature', value:`${Math.round(layer.temp)} °C`, col: heatColor(layer.temp,200,1600) },
+            { label:'Phase State', value: ph, col: pc },
+            { label:'Melt Frac',  value:`${(layer.meltFrac*100).toFixed(0)} %`, col:'#FF8F00' },
+            { label:'Reaction',   value: mi.reaction, col:'#A5D6A7' },
+            { label:'Note',       value: mi.notes, col:'#78909C' },
+          ]
+        }
+      }
+    })
+
+    // Hit test: CO gas particles
+    if (!tooltip) {
+      sim.coGas.forEach(p => {
+        const dx=mx-p.x, dy=my-p.y
+        if (Math.sqrt(dx*dx+dy*dy) < Math.max(p.r*2.5, 10)) {
+          const yFrac = clamp((p.y-BF_TOP)/BF_H, 0, 1)
+          const isUpper = yFrac < 0.4
+          tooltip = {
+            title: isUpper ? 'CO₂ Gas (Top gas)' : 'CO Gas (Rising)',
+            color: isUpper ? '#6B9E45' : '#B8A040',
+            lines: [
+              { label:'Type',     value: isUpper ? 'Carbon Dioxide CO₂' : 'Carbon Monoxide CO', col: isUpper ? '#8BC34A' : '#FFD54F' },
+              { label:'Origin',   value: isUpper ? 'CO reacted with Fe₂O₃' : 'C+O₂→CO₂  CO₂+C→2CO at tuyere', col:'#90A4AE' },
+              { label:'Zone',     value: isUpper ? 'Upper shaft / Stack' : 'Bosh / Raceway zone', col:'#90A4AE' },
+              { label:'Effect',   value: isUpper ? 'Exits as top gas (fuel/power)' : 'Rises to reduce iron ore', col:'#A5D6A7' },
+              { label:'Temp est', value:`~${Math.round(200+yFrac*1800)} °C`, col: heatColor(200+yFrac*1800,200,2000) },
+            ]
+          }
+        }
+      })
+    }
+
+    // Hit test: steam puffs
+    if (!tooltip) {
+      sim.steamPuffs.forEach(p => {
+        const dx=mx-p.x, dy=my-p.y
+        if (Math.sqrt(dx*dx+dy*dy) < Math.max(p.r*2.5,10)) {
+          tooltip = {
+            title: 'H₂O Steam',
+            color: '#78B4CC',
+            lines: [
+              { label:'Type',   value:'Water vapour (H₂O)',       col:'#81D4FA' },
+              { label:'Origin', value:'Ore moisture evaporation', col:'#90A4AE' },
+              { label:'Range',  value:'100 – 320 °C zone',        col:'#90A4AE' },
+              { label:'Effect', value:'Exits via top gas system',  col:'#A5D6A7' },
+            ]
+          }
+        }
+      })
+    }
+
+    // Hit test: tuyere / bustle pipe zone
+    if (!tooltip) {
+      const distToTuyere = Math.abs(my - TUYERE_Y)
+      const distToCentre = Math.abs(mx - BF_CX)
+      if (distToTuyere < 28 && distToCentre < bfHW(0.72)+30) {
+        tooltip = {
+          title: 'Tuyere / Raceway Zone',
+          color: '#1565C0',
+          lines: [
+            { label:'Hot blast', value:`${hotBlastTemp}°C  ${windRate}% wind rate`, col:'#29B6F6' },
+            { label:'Temp',     value:'1900 – 2200°C at raceway',                   col:'#FF3D00' },
+            { label:'Reaction', value:'C + O₂ → CO₂  immediate',                   col:'#FFD54F' },
+            { label:'Then',     value:'CO₂ + C → 2CO  in raceway',                 col:'#FFB300' },
+            { label:'Result',   value:'CO gas rises to reduce ore above',           col:'#A5D6A7' },
+          ]
+        }
+      }
+    }
+
+    // Hit test: hearth
+    if (!tooltip) {
+      if (my > HEARTH_TOP && my < HEARTH_BOT && mx > BF_CX-bfHW(0.90) && mx < BF_CX+bfHW(0.90)) {
+        const yRelHearth = (my - HEARTH_TOP) / HEARTH_H
+        const ironTop2b  = HEARTH_BOT - HEARTH_H*sim.ironLevel
+        const slagTop2b  = ironTop2b - HEARTH_H*sim.slagLevel*0.48
+        if (my > ironTop2b) {
+          tooltip = { title:'Liquid Hot Metal (Iron)', color:'#FF6D00', lines:[
+            { label:'Temp',    value:`${Math.round(sim.ironTemp)} °C`,             col:'#FF6D00' },
+            { label:'Level',   value:`${(sim.ironLevel*100).toFixed(0)}%`,          col:'#FF8F00' },
+            { label:'Si',      value:'~0.4–0.8%  Mn ~0.3%',                        col:'#90A4AE' },
+            { label:'Tap',     value:sim.tapping?'TAPPING NOW':'Tap when level >80%',col:sim.tapping?'#FFD54F':'#546E7A' },
+            { label:'To',      value:'Torpedo ladle → Steel plant',                col:'#A5D6A7' },
+          ]}
+        } else if (my > slagTop2b) {
+          tooltip = { title:'Liquid Slag', color:'#8BC34A', lines:[
+            { label:'Temp',    value:`${Math.round(sim.slagTemp)} °C`,             col:'#A5D6A7' },
+            { label:'Level',   value:`${(sim.slagLevel*100).toFixed(0)}%`,          col:'#8BC34A' },
+            { label:'Compo',   value:'CaO-SiO₂-Al₂O₃-MgO',                        col:'#90A4AE' },
+            { label:'Basicity',value:`~${(2.2+Math.random()*0.3).toFixed(1)} CaO/SiO₂`,col:'#78909C' },
+            { label:'To',      value:'Slag pot → Granulation plant',               col:'#A5D6A7' },
+          ]}
+        }
+      }
+    }
+
+    // Hit test: Torpedo ladle
+    if (!tooltip) {
+      sim.torpedoLadles.forEach(t => {
+        if (mx>t.x-42&&mx<t.x+42&&my>t.y-18&&my<t.y+36) {
+          tooltip = { title:'Torpedo Ladle Car', color:'#FF8F00', lines:[
+            { label:'Contents', value:`Hot metal ~${Math.round(t.temp)}°C`, col:'#FF6D00' },
+            { label:'Capacity', value:'~280–320 t per ladle',               col:'#90A4AE' },
+            { label:'Status',   value:t.filling?'FILLING — tapping in progress':'Moving to steel plant', col:t.filling?'#FFD54F':'#57ab5a' },
+            { label:'To',       value:'BOF Steel Making / Desulph station', col:'#A5D6A7' },
+          ]}
+        }
+      })
+    }
+
+    // Draw tooltip
+    if (tooltip) {
+      const TW = clamp(W * 0.28, 200, 300)
+      const lineH = 18, pad = 12
+      const TH = pad*2 + 18 + tooltip.lines.length*lineH + 4
+      let tx3 = mx + 16, ty3 = my - TH/2
+      // Keep inside canvas
+      if (tx3 + TW > W - 10) tx3 = mx - TW - 16
+      if (ty3 < 30) ty3 = 30
+      if (ty3 + TH > H - 30) ty3 = H - TH - 30
+
+      // Shadow
+      ctx.shadowColor='rgba(0,0,0,0.6)'; ctx.shadowBlur=12
+      ctx.fillStyle='rgba(5,12,25,0.94)'; ctx.strokeStyle=tooltip.color; ctx.lineWidth=1.5
+      ctx.beginPath(); ctx.roundRect(tx3, ty3, TW, TH, 6); ctx.fill(); ctx.stroke()
+      ctx.shadowBlur=0
+
+      // Title bar
+      ctx.fillStyle=tooltip.color+'25'; ctx.fillRect(tx3+1,ty3+1,TW-2,22)
+      ctx.fillStyle=tooltip.color; ctx.font=`bold ${clamp(W*0.011,8,11)}px monospace`; ctx.textAlign='left'
+      ctx.fillText(tooltip.title, tx3+pad, ty3+15)
+
+      // Divider
+      ctx.strokeStyle=tooltip.color+'40'; ctx.lineWidth=0.8
+      ctx.beginPath(); ctx.moveTo(tx3+pad,ty3+24); ctx.lineTo(tx3+TW-pad,ty3+24); ctx.stroke()
+
+      // Lines
+      tooltip.lines.forEach((line,li)=>{
+        const ly = ty3 + 38 + li*lineH
+        ctx.fillStyle='rgba(120,145,165,0.75)'; ctx.font=`${clamp(W*0.009,7,9)}px monospace`; ctx.textAlign='left'
+        ctx.fillText(line.label+':', tx3+pad, ly)
+        ctx.fillStyle=line.col; ctx.font=`bold ${clamp(W*0.009,7,9)}px monospace`; ctx.textAlign='right'
+        // Wrap long values
+        const val = line.value.length>32 ? line.value.substring(0,30)+'…' : line.value
+        ctx.fillText(val, tx3+TW-pad, ly)
+      })
+
+      // Cursor dot
+      ctx.fillStyle=tooltip.color; ctx.beginPath(); ctx.arc(mx,my,4,0,Math.PI*2); ctx.fill()
+      ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=1; ctx.stroke()
+    }
 
     // Footer
     ctx.fillStyle='rgba(4,8,18,0.92)'; ctx.fillRect(0,H-18,W,18)
