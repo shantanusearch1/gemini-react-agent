@@ -82,7 +82,9 @@ const NAV_ITEMS = [
   { id: 'bof_td',         icon: 'monitor_heart', label: 'BOF TD Prediction',roles: ['admin','steel'] },
   { id: 'divider2',       isDivider: true,       label: 'Casting Models',   roles: ['admin','steel'] },
   { id: 'slab_casting',   icon: 'view_stream',   label: 'Slab Casting',     roles: ['admin','steel'] },
-  { id: 'billet_casting', icon: 'grid_on',       label: 'Billet Casting',   roles: ['admin','steel'] },
+  { id: 'billet_casting', icon: 'grid_on', label: 'Billet Casting', roles: ['admin','steel'] },
+  { id: 'divider3', isDivider: true, label: 'Iron Making', roles: ['admin','steel'] },
+  { id: 'iron_making', icon: 'local_fire_department', label: 'Blast Furnace', roles: ['admin','steel'] },
 ]
 
 // Material Design colors
