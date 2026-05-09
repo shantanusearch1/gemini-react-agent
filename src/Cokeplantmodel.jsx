@@ -113,22 +113,35 @@ function CokePlantCanvas({
 
     // ── LAYOUT ────────────────────────────────────────────────────────────
     const OVEN_COUNT  = 8
-    const OVEN_W      = clamp(W * 0.072, 55, 90)
-    const OVEN_H      = H * 0.38
-    const OVEN_Y0     = H * 0.22
+    const OVEN_W      = clamp(W * 0.072, 52, 82)
+    const OVEN_H      = H * 0.32
+    const OVEN_Y0     = H * 0.20
     const OVEN_Y1     = OVEN_Y0 + OVEN_H
     const OVEN_X0     = W * 0.12
     const BATTERY_W   = OVEN_W * OVEN_COUNT
     const BATTERY_MID = OVEN_X0 + BATTERY_W / 2
+    const COKE_SIDE_X = OVEN_X0 + BATTERY_W  // right = coke side (pusher pushes right→)
+    const COAL_SIDE_X = OVEN_X0              // left  = coal side
 
-    const COAL_Y      = H * 0.05
+    const COAL_Y      = H * 0.04
     const FLUE_Y0     = OVEN_Y1
-    const FLUE_H      = H * 0.10
-    const GAS_MAIN_Y  = OVEN_Y0 - H * 0.06
-    const WHARF_Y     = H * 0.72
+    const FLUE_H      = H * 0.08
+    const GAS_MAIN_Y  = OVEN_Y0 - H * 0.055
+    // Pusher travels on COAL side (left), coke exits COKE side (right)
+    const PUSHER_RAIL_Y = OVEN_Y0 + OVEN_H * 0.5  // pusher ram at mid-oven height
+    // Quench car runs on COKE side track (right of battery)
+    const QUENCH_RAIL_Y = OVEN_Y1 + FLUE_H + H * 0.01
+    const QUENCH_CAR_BASE_X = COKE_SIDE_X + W * 0.01
+    // Coke drops DOWN from oven exit to quench car below
+    const COKE_DROP_X = COKE_SIDE_X + W * 0.025
+    // Wharf is BELOW the quench car track (coke dumped down from car)
+    const WHARF_Y     = QUENCH_RAIL_Y + H * 0.09
     const WHARF_H     = H * 0.10
-    const CONVEYOR_Y  = H * 0.84
-    const QUENCH_Y    = OVEN_Y1 + FLUE_H + H * 0.015
+    const WHARF_X0    = COKE_SIDE_X - W * 0.02
+    const WHARF_X1    = W * 0.98
+    const CONVEYOR_Y  = WHARF_Y + WHARF_H + H * 0.015
+    // Keep QUENCH_Y for compat
+    const QUENCH_Y    = QUENCH_RAIL_Y
 
     const ovenX = (i) => OVEN_X0 + i * OVEN_W
 
@@ -155,7 +168,8 @@ function CokePlantCanvas({
           if (!sim.pusherActive && sim.frame % 380 === i * 47) {
             sim.pusherActive = true
             sim.pusherTarget = i
-            sim.pusherX = ovenX(i) - OVEN_W * 0.5
+            // Pusher travels on coal side (left) — aligns with oven
+            sim.pusherX = COAL_SIDE_X - OVEN_W * 1.2
           }
         } else if (phase === 'pushing') {
           gasFlow  = 0.0
@@ -172,7 +186,7 @@ function CokePlantCanvas({
       // Pusher machine
       if (sim.pusherActive) {
         const ti    = sim.pusherTarget
-        const targX = ovenX(ti)
+        const targX = ovenX(ti) - OVEN_W * 0.1  // align with oven left (coal side)
         if (Math.abs(sim.pusherX - targX) > 3) {
           sim.pusherX += (targX - sim.pusherX) * 0.04
         } else {
@@ -185,16 +199,17 @@ function CokePlantCanvas({
               sim.cokesPushed++
               onCokePush()
               // Add coke to wharf
+              // Coke falls from oven exit (coke side) into quench car
               sim.cokeWharfPiles.push({
-                x: W * 0.75 + Math.random() * W * 0.15,
-                y: WHARF_Y + 8,
-                w: 35 + Math.random() * 25,
-                h: 18 + Math.random() * 14,
-                temp: 900 + Math.random() * 150,
+                x: QUENCH_CAR_BASE_X + OVEN_W * 1.5 + Math.random() * OVEN_W * 3,
+                y: WHARF_Y + 10 + Math.random() * 12,
+                w: 38 + Math.random() * 28,
+                h: 20 + Math.random() * 16,
+                temp: 980 + Math.random() * 100,
                 cooling: true,
               })
-              // Add to conveyor
-              sim.cokeConveyor.push({ x: W * 0.72, temp: 780, w: 28 })
+              // Add to conveyor (exits wharf)
+              sim.cokeConveyor.push({ x: WHARF_X0 + 10, temp: 420, w: 28 })
             }, 1200)
           }
         }
@@ -215,7 +230,8 @@ function CokePlantCanvas({
         if (sim.quenchTimer <= 0) sim.quenchActive = false
       } else if (sim.cokesPushed > 0 && sim.frame % 420 === 0) {
         sim.quenchActive = true; sim.quenchTimer = 180
-        sim.quenchCarX = OVEN_X0 + BATTERY_W + W * 0.04
+        // Quench car waits at coke side, moves under oven exit
+        sim.quenchCarX = QUENCH_CAR_BASE_X + Math.random() * OVEN_W * 2
       }
 
       // COG particles from ascension pipes
@@ -265,7 +281,7 @@ function CokePlantCanvas({
       sim.cokeConveyor = sim.cokeConveyor.map(c => ({ ...c, x: c.x + 0.5, temp: Math.max(200, c.temp - 0.3) })).filter(c => c.x < W * 0.99)
 
       // Cool wharf piles
-      sim.cokeWharfPiles = sim.cokeWharfPiles.map(p => ({ ...p, temp: Math.max(80, p.temp - 0.12 * intensity) })).filter(p => p.x < W + 100)
+      sim.cokeWharfPiles = sim.cokeWharfPiles.map(p => ({ ...p, temp: Math.max(80, p.temp - 0.10 * intensity) })).filter(p => p.x < W + 150)
 
       // Update COG temp and yield
       const avgOvenTemp = sim.ovens.reduce((a, o) => a + o.temp, 0) / OVEN_COUNT
@@ -494,50 +510,96 @@ function CokePlantCanvas({
     lbl(`Flue temp: ${Math.round(sim.underFireTemp)}°C`,BATTERY_MID,FLUE_Y0+FLUE_H*0.78,running?'#FF7043':'#37474F',clamp(W*0.009,7,9))
 
     // ── PUSHER MACHINE ─────────────────────────────────────────────────────
-    const PUSHER_Y=OVEN_Y1+FLUE_H+H*0.01
-    const px2=sim.pusherX
-    // Rail
+    // PUSHER MACHINE — travels on COAL SIDE (left), ram pushes RIGHT through oven
+    const PUSHER_Y = OVEN_Y0 + OVEN_H * 0.35   // mid-height on left side
+    const px2 = sim.pusherX
+    // Vertical rail on coal side
     ctx.strokeStyle='#1a2535'; ctx.lineWidth=3
-    ctx.beginPath(); ctx.moveTo(OVEN_X0-30,PUSHER_Y+H*0.035); ctx.lineTo(OVEN_X0+BATTERY_W+30,PUSHER_Y+H*0.035); ctx.stroke()
-    ctx.beginPath(); ctx.moveTo(OVEN_X0-30,PUSHER_Y+H*0.055); ctx.lineTo(OVEN_X0+BATTERY_W+30,PUSHER_Y+H*0.055); ctx.stroke()
-    // Pusher body
+    ctx.beginPath(); ctx.moveTo(COAL_SIDE_X-38,OVEN_Y0); ctx.lineTo(COAL_SIDE_X-38,OVEN_Y1+FLUE_H); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(COAL_SIDE_X-22,OVEN_Y0); ctx.lineTo(COAL_SIDE_X-22,OVEN_Y1+FLUE_H); ctx.stroke()
+    // Pusher machine body (moves vertically to align with oven)
+    const pusherBodyY = PUSHER_Y - H*0.04
     ctx.fillStyle='#1a2d3d'; ctx.strokeStyle='#2c4a65'; ctx.lineWidth=1.2
-    ctx.fillRect(px2-25,PUSHER_Y,50,H*0.06)
-    ctx.strokeRect(px2-25,PUSHER_Y,50,H*0.06)
-    // Pusher arm
+    ctx.fillRect(COAL_SIDE_X-56,pusherBodyY,46,H*0.08); ctx.strokeRect(COAL_SIDE_X-56,pusherBodyY,46,H*0.08)
+    // Pusher ram (horizontal, extends RIGHT into oven)
     if(sim.pusherActive){
-      ctx.fillStyle='#2c4a65'; ctx.fillRect(px2-22,PUSHER_Y+H*0.008,44,H*0.012)
+      const ti2=sim.pusherTarget
+      const ramTargY=ovenX(ti2)>0 ? OVEN_Y0+OVEN_H*0.35 : PUSHER_Y
+      // Hydraulic ram extending right
       ctx.fillStyle='#1565C0'
-      ctx.fillRect(px2+18,PUSHER_Y+H*0.005,OVEN_W*0.8,H*0.018)
+      ctx.fillRect(COAL_SIDE_X-10,ramTargY-6,OVEN_W*5.5,12)  // long ram through oven
+      ctx.fillStyle='#2c4a65'
+      ctx.fillRect(COAL_SIDE_X-10,ramTargY-8,18,16)           // ram head
+      ctx.strokeStyle='#29B6F6'; ctx.lineWidth=0.8; ctx.strokeRect(COAL_SIDE_X-10,ramTargY-8,18,16)
+      // Ram guide housing
+      ctx.strokeStyle='#1565C0'; ctx.lineWidth=1; ctx.setLineDash([4,3])
+      ctx.beginPath(); ctx.moveTo(COAL_SIDE_X-10,ramTargY-6); ctx.lineTo(COKE_SIDE_X+12,ramTargY-6); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(COAL_SIDE_X-10,ramTargY+6); ctx.lineTo(COKE_SIDE_X+12,ramTargY+6); ctx.stroke()
+      ctx.setLineDash([])
+      // Coke being pushed — glowing mass exiting right side of oven
+      const pushGrd=ctx.createLinearGradient(COKE_SIDE_X-OVEN_W,ramTargY-OVEN_H*0.35,COKE_SIDE_X+20,ramTargY-OVEN_H*0.35)
+      pushGrd.addColorStop(0,'rgba(180,100,20,0.55)'); pushGrd.addColorStop(0.7,heatColor(920,100,1400)); pushGrd.addColorStop(1,'rgba(255,120,0,0.85)')
+      ctx.fillStyle=pushGrd; ctx.fillRect(COKE_SIDE_X-OVEN_W*0.5,ramTargY-OVEN_H*0.38,OVEN_W*0.6,OVEN_H*0.76)
+      lbl('PUSHING →',COAL_SIDE_X-30,pusherBodyY-6,'#FFD54F',clamp(W*0.009,7,9),'right')
+    }
+    // Wheels on rail
+    ctx.fillStyle='#253545'; ctx.strokeStyle='#37474F'; ctx.lineWidth=0.8
+    ;[-5,H*0.06-5].forEach(wy=>{
+      ctx.beginPath(); ctx.arc(COAL_SIDE_X-38,pusherBodyY+wy+5,5,0,Math.PI*2); ctx.fill(); ctx.stroke()
+      ctx.beginPath(); ctx.arc(COAL_SIDE_X-22,pusherBodyY+wy+5,5,0,Math.PI*2); ctx.fill(); ctx.stroke()
+    })
+    lbl('PUSHER',COAL_SIDE_X-35,OVEN_Y0-8,'#29B6F6',clamp(W*0.009,7,9),'right')
+    lbl('MACHINE',COAL_SIDE_X-35,OVEN_Y0+2,'#29B6F6',clamp(W*0.008,6,8),'right')
+    lbl('← COAL SIDE',COAL_SIDE_X-56,OVEN_Y1+FLUE_H+10,'#1e3040',clamp(W*0.009,7,9),'right')
+
+    // ── COKE GUIDE + QUENCH CAR (COKE SIDE = RIGHT of battery) ──────────
+    const QY=QUENCH_RAIL_Y
+    const qx=sim.quenchCarX>0?sim.quenchCarX:QUENCH_CAR_BASE_X+OVEN_W*1.5
+    // Coke side label
+    lbl('COKE SIDE →',COKE_SIDE_X+8,OVEN_Y0-8,'#FF8F00',clamp(W*0.009,7,9),'left')
+    // Coke exit chute (from oven coke side down to quench car)
+    ctx.fillStyle='#1a2535'; ctx.strokeStyle='#2c4055'; ctx.lineWidth=1
+    // Vertical drop zone from battery to quench car
+    ctx.fillStyle='rgba(10,18,30,0.7)'
+    ctx.fillRect(COKE_SIDE_X,OVEN_Y0,W*0.10,OVEN_H+FLUE_H+H*0.01)
+    ctx.strokeStyle='#1e3040'; ctx.lineWidth=0.8
+    ctx.strokeRect(COKE_SIDE_X,OVEN_Y0,W*0.10,OVEN_H+FLUE_H+H*0.01)
+    lbl('COKE GUIDE',COKE_SIDE_X+W*0.05,OVEN_Y0+OVEN_H*0.5,'#263238',clamp(W*0.009,7,9))
+    lbl('CHUTE',COKE_SIDE_X+W*0.05,OVEN_Y0+OVEN_H*0.5+12,'#263238',clamp(W*0.009,7,9))
+
+    // Quench car track (horizontal, on coke side, below battery)
+    ctx.strokeStyle='#1a2535'; ctx.lineWidth=3
+    ctx.beginPath(); ctx.moveTo(COKE_SIDE_X,QY+H*0.045); ctx.lineTo(W*0.97,QY+H*0.045); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(COKE_SIDE_X,QY+H*0.060); ctx.lineTo(W*0.97,QY+H*0.060); ctx.stroke()
+    // Quench car body
+    ctx.fillStyle='#1a2d3d'; ctx.strokeStyle='#2c4a65'; ctx.lineWidth=1.2
+    ctx.fillRect(qx-40,QY,80,H*0.055); ctx.strokeRect(qx-40,QY,80,H*0.055)
+    // Car interior — hot coke inside
+    if(sim.cokesPushed>0){
+      const cokeInCar = sim.quenchActive ? sim.cokesPushed : Math.max(0,sim.cokesPushed-1)
+      if(cokeInCar>0){
+        const cg3=ctx.createLinearGradient(0,QY+4,0,QY+H*0.05)
+        cg3.addColorStop(0,heatColor(sim.quenchActive?650:920,100,1200)); cg3.addColorStop(1,'rgba(30,22,14,0.92)')
+        ctx.fillStyle=cg3; ctx.fillRect(qx-36,QY+4,72,H*0.044)
+      }
     }
     // Wheels
-    ;[-18,18].forEach(wx=>{
-      ctx.fillStyle='#253545'; ctx.strokeStyle='#37474F'; ctx.lineWidth=0.8
-      ctx.beginPath(); ctx.arc(px2+wx,PUSHER_Y+H*0.058,6,0,Math.PI*2); ctx.fill(); ctx.stroke()
-    })
-    lbl('PUSHER',px2,PUSHER_Y-5,'#29B6F6',clamp(W*0.009,7,9))
-
-    // ── COKE GUIDE + QUENCH CAR ────────────────────────────────────────────
-    const qx=sim.quenchCarX, QY=QUENCH_Y
-    // Quench car track
-    ctx.strokeStyle='#0d1520'; ctx.lineWidth=3
-    ctx.beginPath(); ctx.moveTo(OVEN_X0+BATTERY_W,QY+H*0.045); ctx.lineTo(W*0.85,QY+H*0.045); ctx.stroke()
-    if(qx>0){
-      ctx.fillStyle='#1e3040'; ctx.strokeStyle='#2c4a65'; ctx.lineWidth=1
-      ctx.fillRect(qx-30,QY,60,H*0.04); ctx.strokeRect(qx-30,QY,60,H*0.04)
-      ;[-20,20].forEach(wx=>{ ctx.fillStyle='#1a2d3d'; ctx.beginPath(); ctx.arc(qx+wx,QY+H*0.042,5,0,Math.PI*2); ctx.fill() })
-      // Quench water spray nozzles
-      if(sim.quenchActive&&running){
-        ;[-18,-8,2,12,22].forEach(nx=>{
-          ctx.fillStyle='#1565C0'; ctx.fillRect(qx+nx-2,QY-5,4,6)
-          // Spray jets
-          for(let a=-0.4;a<=0.4;a+=0.2){
-            ctx.strokeStyle=`rgba(41,182,246,${0.6+0.3*Math.sin(sim.t*8+a)})`; ctx.lineWidth=1
-            ctx.beginPath(); ctx.moveTo(qx+nx,QY-3); ctx.lineTo(qx+nx+Math.sin(a)*15,QY-3+15); ctx.stroke()
-          }
-        })
-      }
-      lbl(sim.quenchActive?'QUENCHING':'COKE GUIDE',qx,QY-10,sim.quenchActive?'#29B6F6':'#546E7A',clamp(W*0.009,7,9))
+    ;[-28,0,28].forEach(wx=>{ ctx.fillStyle='#253545'; ctx.strokeStyle='#37474F'; ctx.lineWidth=0.8; ctx.beginPath(); ctx.arc(qx+wx,QY+H*0.060,6,0,Math.PI*2); ctx.fill(); ctx.stroke() })
+    // Quench water spray tower above car
+    if(sim.quenchActive&&running){
+      // Tower structure
+      ctx.fillStyle='#1a2535'; ctx.fillRect(qx-8,QY-H*0.08,16,H*0.08); ctx.strokeStyle='#2c4055'; ctx.lineWidth=0.8; ctx.strokeRect(qx-8,QY-H*0.08,16,H*0.08)
+      ;[-20,-10,0,10,20].forEach(nx=>{
+        ctx.fillStyle='#1565C0'; ctx.fillRect(qx+nx-2,QY-4,4,5)
+        for(let a=-0.5;a<=0.5;a+=0.2){
+          ctx.strokeStyle=`rgba(41,182,246,${0.65+0.3*Math.sin(sim.t*8+a*3)})`; ctx.lineWidth=1.2
+          ctx.beginPath(); ctx.moveTo(qx+nx,QY-1); ctx.lineTo(qx+nx+Math.sin(a)*18,QY-1+20); ctx.stroke()
+        }
+      })
+      lbl('⚡ QUENCHING',qx,QY-H*0.085,'#29B6F6',clamp(W*0.010,8,11))
+      lbl(`${quenchType}`,qx,QY-H*0.07,'#4FC3F7',clamp(W*0.009,7,9))
+    } else {
+      lbl('QUENCH CAR',qx,QY-8,'#546E7A',clamp(W*0.009,7,9))
     }
 
     // Quench drops + steam
@@ -563,12 +625,16 @@ function CokePlantCanvas({
     lbl('LARRY CAR',lx2,LARRY_Y-5,'#37474F',clamp(W*0.009,7,9))
 
     // ── WHARF & CONVEYOR ───────────────────────────────────────────────────
-    ctx.fillStyle='#0f1a28'; ctx.fillRect(W*0.68,WHARF_Y,W*0.30,WHARF_H)
-    ctx.strokeStyle='#1a2d40'; ctx.lineWidth=1; ctx.strokeRect(W*0.68,WHARF_Y,W*0.30,WHARF_H)
-    lbl('COKE WHARF',W*0.83,WHARF_Y-8,'#2c4055',clamp(W*0.010,8,10))
+    ctx.fillStyle='#0f1a28'; ctx.fillRect(WHARF_X0,WHARF_Y,WHARF_X1-WHARF_X0,WHARF_H)
+    ctx.strokeStyle='#1a2d40'; ctx.lineWidth=1; ctx.strokeRect(WHARF_X0,WHARF_Y,WHARF_X1-WHARF_X0,WHARF_H)
+    lbl('COKE WHARF (cooling after quench)',WHARF_X0+(WHARF_X1-WHARF_X0)/2,WHARF_Y-8,'#2c4055',clamp(W*0.010,8,10))
+    // Arrow showing coke dumps from quench car down to wharf
+    ctx.strokeStyle='rgba(255,140,0,0.2)'; ctx.lineWidth=2; ctx.setLineDash([3,4])
+    ctx.beginPath(); ctx.moveTo(qx,QY+H*0.058); ctx.lineTo(qx,WHARF_Y+4); ctx.stroke(); ctx.setLineDash([])
+    lbl('↓ dump',qx,QY+H*0.065+(WHARF_Y-QY-H*0.065)*0.5,'rgba(100,80,30,0.45)',clamp(W*0.008,6,7))
 
     sim.cokeWharfPiles.forEach(p=>{
-      if(p.x<W*0.68||p.x>W*0.98) return
+      if(p.x<WHARF_X0-20||p.x>WHARF_X1+20) return
       const pg=ctx.createLinearGradient(p.x-p.w/2,p.y,p.x+p.w/2,p.y+p.h)
       pg.addColorStop(0,heatColor(p.temp,80,1000)); pg.addColorStop(1,'rgba(25,22,18,0.92)')
       ctx.fillStyle=pg
@@ -580,8 +646,8 @@ function CokePlantCanvas({
     })
 
     // Conveyor belt
-    ctx.fillStyle='#0c1520'; ctx.fillRect(W*0.01,CONVEYOR_Y,W*0.70,H*0.045)
-    ctx.strokeStyle='#1a2535'; ctx.lineWidth=1; ctx.strokeRect(W*0.01,CONVEYOR_Y,W*0.70,H*0.045)
+    ctx.fillStyle='#0c1520'; ctx.fillRect(W*0.01,CONVEYOR_Y,W*0.94,H*0.045)
+    ctx.strokeStyle='#1a2535'; ctx.lineWidth=1; ctx.strokeRect(W*0.01,CONVEYOR_Y,W*0.94,H*0.045)
     // Belt lines
     for(let bx2=W*0.01+sim.conveyorOffset;bx2<W*0.71;bx2+=30){
       ctx.strokeStyle='rgba(30,50,70,0.5)'; ctx.lineWidth=1.5
@@ -753,9 +819,9 @@ function CokePlantCanvas({
 
     // Draw tooltip
     if(tooltip){
-      const TW=clamp(W*0.30,265,360)
-      const lineH=22,pad=14
-      const TH=pad*2+26+tooltip.lines.length*lineH+6
+      const TW=clamp(W*0.33,290,400)
+      const lineH=25,pad=16
+      const TH=pad*2+30+tooltip.lines.length*lineH+8
       let tx4=mx+18,ty4=my2-TH/2
       if(tx4+TW>W-10) tx4=mx-TW-18
       if(ty4<32) ty4=32
@@ -764,16 +830,16 @@ function CokePlantCanvas({
       ctx.fillStyle='rgba(5,12,25,0.95)'; ctx.strokeStyle=tooltip.color; ctx.lineWidth=1.5
       ctx.beginPath(); ctx.roundRect(tx4,ty4,TW,TH,6); ctx.fill(); ctx.stroke()
       ctx.shadowBlur=0
-      ctx.fillStyle=tooltip.color+'28'; ctx.fillRect(tx4+1,ty4+1,TW-2,28)
-      ctx.fillStyle=tooltip.color; ctx.font=`bold ${clamp(W*0.013,12,15)}px monospace`; ctx.textAlign='left'
+      ctx.fillStyle=tooltip.color+'28'; ctx.fillRect(tx4+1,ty4+1,TW-2,32)
+      ctx.fillStyle=tooltip.color; ctx.font=`bold ${clamp(W*0.015,13,17)}px monospace`; ctx.textAlign='left'
       ctx.fillText(tooltip.title,tx4+pad,ty4+19)
       ctx.strokeStyle=tooltip.color+'45'; ctx.lineWidth=0.8
-      ctx.beginPath(); ctx.moveTo(tx4+pad,ty4+32); ctx.lineTo(tx4+TW-pad,ty4+32); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(tx4+pad,ty4+36); ctx.lineTo(tx4+TW-pad,ty4+36); ctx.stroke()
       tooltip.lines.forEach((line,li)=>{
-        const ly2=ty4+48+li*lineH
-        ctx.fillStyle='rgba(160,185,205,0.85)'; ctx.font=`${clamp(W*0.011,10,12)}px monospace`; ctx.textAlign='left'
+        const ly2=ty4+54+li*lineH
+        ctx.fillStyle='rgba(170,195,215,0.90)'; ctx.font=`${clamp(W*0.012,11,14)}px monospace`; ctx.textAlign='left'
         ctx.fillText(line.label+':',tx4+pad,ly2)
-        ctx.fillStyle=line.col; ctx.font=`bold ${clamp(W*0.011,10,12)}px monospace`; ctx.textAlign='right'
+        ctx.fillStyle=line.col; ctx.font=`bold ${clamp(W*0.012,11,14)}px monospace`; ctx.textAlign='right'
         const val=line.value.length>32?line.value.substring(0,30)+'…':line.value
         ctx.fillText(val,tx4+TW-pad,ly2)
       })
