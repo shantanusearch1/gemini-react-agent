@@ -1014,9 +1014,9 @@ function BlastFurnaceCanvas({
 
     // Draw tooltip
     if (tooltip) {
-      const TW = clamp(W * 0.28, 200, 300)
-      const lineH = 18, pad = 12
-      const TH = pad*2 + 18 + tooltip.lines.length*lineH + 4
+      const TW = clamp(W * 0.32, 260, 360)
+      const lineH = 22, pad = 14
+      const TH = pad*2 + 24 + tooltip.lines.length*lineH + 6
       let tx3 = mx + 16, ty3 = my - TH/2
       // Keep inside canvas
       if (tx3 + TW > W - 10) tx3 = mx - TW - 16
@@ -1030,20 +1030,20 @@ function BlastFurnaceCanvas({
       ctx.shadowBlur=0
 
       // Title bar
-      ctx.fillStyle=tooltip.color+'25'; ctx.fillRect(tx3+1,ty3+1,TW-2,22)
-      ctx.fillStyle=tooltip.color; ctx.font=`bold ${clamp(W*0.011,8,11)}px monospace`; ctx.textAlign='left'
-      ctx.fillText(tooltip.title, tx3+pad, ty3+15)
+      ctx.fillStyle=tooltip.color+'25'; ctx.fillRect(tx3+1,ty3+1,TW-2,26)
+      ctx.fillStyle=tooltip.color; ctx.font=`bold ${clamp(W*0.014,12,15)}px monospace`; ctx.textAlign='left'
+      ctx.fillText(tooltip.title, tx3+pad, ty3+17)
 
       // Divider
       ctx.strokeStyle=tooltip.color+'40'; ctx.lineWidth=0.8
-      ctx.beginPath(); ctx.moveTo(tx3+pad,ty3+24); ctx.lineTo(tx3+TW-pad,ty3+24); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(tx3+pad,ty3+30); ctx.lineTo(tx3+TW-pad,ty3+30); ctx.stroke()
 
       // Lines
       tooltip.lines.forEach((line,li)=>{
-        const ly = ty3 + 38 + li*lineH
-        ctx.fillStyle='rgba(120,145,165,0.75)'; ctx.font=`${clamp(W*0.009,7,9)}px monospace`; ctx.textAlign='left'
+        const ly = ty3 + 46 + li*lineH
+        ctx.fillStyle='rgba(160,185,205,0.85)'; ctx.font=`${clamp(W*0.011,10,12)}px monospace`; ctx.textAlign='left'
         ctx.fillText(line.label+':', tx3+pad, ly)
-        ctx.fillStyle=line.col; ctx.font=`bold ${clamp(W*0.009,7,9)}px monospace`; ctx.textAlign='right'
+        ctx.fillStyle=line.col; ctx.font=`bold ${clamp(W*0.011,10,12)}px monospace`; ctx.textAlign='right'
         // Wrap long values
         const val = line.value.length>32 ? line.value.substring(0,30)+'…' : line.value
         ctx.fillText(val, tx3+TW-pad, ly)
