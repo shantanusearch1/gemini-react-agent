@@ -190,16 +190,16 @@ function CokePlantCanvas({
         if (Math.abs(sim.pusherX - targX) > 3) {
           sim.pusherX += (targX - sim.pusherX) * 0.04
         } else {
-          // Push action: change oven to 'pushing' then 'charging'
-          if (sim.ovens[ti].phase === 'ready' || sim.ovens[ti].phase === 'pushing') {
-            sim.ovens[ti] = { ...sim.ovens[ti], phase: 'pushing' }
-            setTimeout(() => {
-              sim.ovens[ti] = { ...sim.ovens[ti], phase: 'charging', progress: 0 }
+          // Push action — frame counter (NO setTimeout - breaks GitHub Pages build)
+          if (sim.ovens[ti].phase === 'ready') {
+            sim.ovens[ti] = { ...sim.ovens[ti], phase: 'pushing', pushFrames: 0 }
+          } else if (sim.ovens[ti].phase === 'pushing') {
+            const pf = (sim.ovens[ti].pushFrames || 0) + 1
+            if (pf > 75) {
+              sim.ovens[ti] = { ...sim.ovens[ti], phase: 'charging', progress: 0, pushFrames: 0 }
               sim.pusherActive = false
               sim.cokesPushed++
               onCokePush()
-              // Add coke to wharf
-              // Coke falls from oven exit (coke side) into quench car
               sim.cokeWharfPiles.push({
                 x: QUENCH_CAR_BASE_X + OVEN_W * 1.5 + Math.random() * OVEN_W * 3,
                 y: WHARF_Y + 10 + Math.random() * 12,
@@ -208,9 +208,10 @@ function CokePlantCanvas({
                 temp: 980 + Math.random() * 100,
                 cooling: true,
               })
-              // Add to conveyor (exits wharf)
               sim.cokeConveyor.push({ x: WHARF_X0 + 10, temp: 420, w: 28 })
-            }, 1200)
+            } else {
+              sim.ovens[ti] = { ...sim.ovens[ti], pushFrames: pf }
+            }
           }
         }
       }
@@ -828,7 +829,15 @@ function CokePlantCanvas({
       if(ty4+TH>H-32) ty4=H-TH-32
       ctx.shadowColor='rgba(0,0,0,0.65)'; ctx.shadowBlur=14
       ctx.fillStyle='rgba(5,12,25,0.95)'; ctx.strokeStyle=tooltip.color; ctx.lineWidth=1.5
-      ctx.beginPath(); ctx.roundRect(tx4,ty4,TW,TH,6); ctx.fill(); ctx.stroke()
+      // roundRect polyfill (not supported in all WebViews)
+      const r6=6
+      ctx.beginPath()
+      ctx.moveTo(tx4+r6,ty4)
+      ctx.lineTo(tx4+TW-r6,ty4); ctx.arcTo(tx4+TW,ty4,tx4+TW,ty4+r6,r6)
+      ctx.lineTo(tx4+TW,ty4+TH-r6); ctx.arcTo(tx4+TW,ty4+TH,tx4+TW-r6,ty4+TH,r6)
+      ctx.lineTo(tx4+r6,ty4+TH); ctx.arcTo(tx4,ty4+TH,tx4,ty4+TH-r6,r6)
+      ctx.lineTo(tx4,ty4+r6); ctx.arcTo(tx4,ty4,tx4+r6,ty4,r6)
+      ctx.closePath(); ctx.fill(); ctx.stroke()
       ctx.shadowBlur=0
       ctx.fillStyle=tooltip.color+'28'; ctx.fillRect(tx4+1,ty4+1,TW-2,32)
       ctx.fillStyle=tooltip.color; ctx.font=`bold ${clamp(W*0.015,13,17)}px monospace`; ctx.textAlign='left'
