@@ -107,9 +107,11 @@ function CokePlantCanvas({
     if (!canvas) { rafRef.current = requestAnimationFrame(draw); return }
     const ctx = canvas.getContext('2d')
     const W = canvas.width, H = canvas.height
+    if (!W || !H) { rafRef.current = requestAnimationFrame(draw); return }
     const sim = S.current
     sim.t += 0.016; sim.frame++
     const dt = 0.016
+    try {
 
     // ── LAYOUT ────────────────────────────────────────────────────────────
     const OVEN_COUNT  = 8
@@ -861,6 +863,14 @@ function CokePlantCanvas({
     ctx.fillStyle='#2c4055'; ctx.font=`${clamp(W*0.009,7,10)}px monospace`; ctx.textAlign='left'
     ctx.fillText(`COKE PLANT  |  OVEN TEMP:${cokeOvenTemp}°C  |  MOISTURE:${coalMoisture}%  |  QUENCH:${quenchType}  |  PUSHED:${sim.cokesPushed}  |  ${new Date().toLocaleTimeString()}`,8,H-4)
 
+    } catch(e) {
+      // Show error on canvas so we can debug in Chrome
+      ctx.fillStyle='#06090f'; ctx.fillRect(0,0,W,H)
+      ctx.fillStyle='#e5534b'; ctx.font='14px monospace'; ctx.textAlign='left'
+      ctx.fillText('RENDER ERROR: ' + e.message, 20, 40)
+      ctx.fillText(e.stack ? e.stack.split('\n')[1] : '', 20, 60)
+      console.error('CokePlant draw error:', e)
+    }
     rafRef.current = requestAnimationFrame(draw)
   }, [running, pushingSpeed, coalMoisture, cokeOvenTemp, quenchType])
 
