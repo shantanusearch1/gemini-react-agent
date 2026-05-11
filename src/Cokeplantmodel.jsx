@@ -68,8 +68,16 @@ function CokePlantCanvas({
 
   useEffect(() => {
     const el = canvasRef.current; if (!el) return
-    const fit = () => { el.width = el.parentElement.clientWidth; el.height = el.parentElement.clientHeight }
-    fit(); window.addEventListener('resize', fit)
+    const fit = () => {
+      const w = el.parentElement ? el.parentElement.clientWidth : window.innerWidth
+      const h = el.parentElement ? el.parentElement.clientHeight : window.innerHeight
+      if (w > 0 && h > 0) { el.width = w; el.height = h }
+    }
+    fit()
+    // Retry a few times in case parent is not sized yet (GitHub Pages / Capacitor)
+    const t1 = setTimeout(fit, 100)
+    const t2 = setTimeout(fit, 400)
+    window.addEventListener('resize', fit)
     const onMove = (e) => {
       const rect = el.getBoundingClientRect()
       mouseRef.current = {
@@ -86,7 +94,12 @@ function CokePlantCanvas({
       mouseRef.current = { x: (t2.clientX-rect.left)*(el.width/rect.width), y: (t2.clientY-rect.top)*(el.height/rect.height) }
     }, { passive: false })
     el.addEventListener('touchend', onLeave)
-    return () => { window.removeEventListener('resize', fit); el.removeEventListener('mousemove', onMove); el.removeEventListener('mouseleave', onLeave) }
+    return () => {
+      clearTimeout(t1); clearTimeout(t2)
+      window.removeEventListener('resize', fit)
+      el.removeEventListener('mousemove', onMove)
+      el.removeEventListener('mouseleave', onLeave)
+    }
   }, [])
 
   useEffect(() => {
@@ -107,7 +120,14 @@ function CokePlantCanvas({
     if (!canvas) { rafRef.current = requestAnimationFrame(draw); return }
     const ctx = canvas.getContext('2d')
     const W = canvas.width, H = canvas.height
-    if (!W || !H) { rafRef.current = requestAnimationFrame(draw); return }
+    if (!W || !H || W < 10 || H < 10) {
+      // Canvas not sized yet — trigger resize and retry
+      if (canvasRef.current && canvasRef.current.parentElement) {
+        const p = canvasRef.current.parentElement
+        if (p.clientWidth > 0) { canvasRef.current.width = p.clientWidth; canvasRef.current.height = p.clientHeight }
+      }
+      rafRef.current = requestAnimationFrame(draw); return
+    }
     const sim = S.current
     sim.t += 0.016; sim.frame++
     const dt = 0.016
