@@ -738,8 +738,13 @@ export default function App({ user, onLogout }) {
             </div>
           )}
 
-          {/* Coke Plant Model 
-          {activeTab === 'coke_plant' && <div style={{margin:-24}}><CokePlantModel /></div>}
+          
+          {/* Coke Plant Model */}
+          {activeTab === 'coke_plant' && (
+            <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+              <CokePlantModel />
+            </div>
+          )}
                      
           {/* ── HISTORY ── */}
           {activeTab === 'history' && (
