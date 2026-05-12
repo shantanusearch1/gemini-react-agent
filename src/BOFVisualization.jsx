@@ -2,61 +2,72 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
 
-function heatColor(temp, min = 1400, max = 1700) {
+function heatColor(temp, min = 1380, max = 1720) {
   const t = clamp((temp - min) / (max - min), 0, 1)
   if (t > 0.85) return `rgba(255,255,${Math.round((1-t)*6*255)},0.97)`
-  if (t > 0.70) return `rgba(255,${Math.round(120+(t-0.70)*5*135)},0,0.95)`
-  if (t > 0.50) return `rgba(255,${Math.round(60+(t-0.50)*5*60)},0,0.92)`
-  if (t > 0.25) return `rgba(${Math.round(200+(t-0.25)*5*55)},${Math.round(30+(t-0.25)*5*30)},0,0.88)`
-  return `rgba(${Math.round(140+t*4*60)},${Math.round(20+t*4*10)},0,0.82)`
+  if (t > 0.70) return `rgba(255,${Math.round(100+t*155)},0,0.95)`
+  if (t > 0.50) return `rgba(255,${Math.round(50+t*80)},0,0.92)`
+  if (t > 0.25) return `rgba(${Math.round(200+t*55)},${Math.round(25+t*30)},0,0.88)`
+  return `rgba(${Math.round(130+t*70)},${Math.round(15+t*15)},0,0.80)`
 }
 
-// ─── CANVAS ───────────────────────────────────────────────────────────────────
+// ─── PROCESS STAGES ──────────────────────────────────────────────────────────
+const STAGES = ['SCRAP_CHARGE','FLUX_CHARGE','HM_CHARGE','BLOWING','SUBLANCE','FERRO_ALLOY','SLAG_OUT','TAPPING','COMPLETE']
+
 function BOFCanvas({
-  running, blowPct, speed,
+  stage, blowPct, running,
   hmWeight, hmTemp, hmC, hmSi, hmMn, hmP,
-  scrapWeight, targetTemp, targetC,
-  lanceHeight, o2Flow, heatNo,
-  setCurrentTemp, setCurrentC, setMoldLevel,
-  onDataUpdate, doReset,
+  scrapWeight, fluxWeight, faWeight,
+  targetTemp, targetC, lanceHeight, o2Flow, heatNo,
+  ladleWeightKg, setLadleWeightKg,
+  setCurrentTemp, setCurrentC,
+  onStageComplete, doReset,
 }) {
   const canvasRef = useRef(null)
   const rafRef    = useRef(null)
-  const mouseRef  = useRef({ x: -999, y: -999 })
+  const mouseRef  = useRef({ x:-999, y:-999 })
   const S = useRef({
-    t: 0, frame: 0,
-    // Bath state
-    bathTemp: 0, bathC: 0, bathSi: 0, bathMn: 0,
-    bathLevel: 0.72,    // 0–1 fill fraction of vessel
-    // Blow state
-    blowPct: 0, blowTime: 0,
-    // Lance
-    lanceY: 0,          // lance tip Y in canvas coords
-    lanceFlame: 0,      // flame intensity
-    // Particles
-    o2Jets: [],         // O2 jet from lance
-    coGas: [],          // CO gas rising from bath
-    co2Gas: [],         // CO2 from post-combustion
-    slagParticles: [],  // slag droplets splashing
-    sparks: [],         // metal sparks ejected
-    steamPuffs: [],     // steam from scrap moisture early blow
-    // Slag
-    slagThickness: 0,   // px
-    slagFoaming: 0,     // 0–1 foaming intensity
-    slagColor: 0,       // temp-based
-    // Vessel oscillation
+    t:0, frame:0,
+    // Vessel internals
+    bathTemp: 1265, bathC: 4.5, bathSi: 0.55, bathMn: 0.35,
+    bathLevel: 0.05,   // fills as charged
+    slagThick: 0, slagFoam: 0,
     vesselVib: 0,
-    // Sub-lance
-    subLanceDeploy: false, subLanceY: 0,
-    // Hood / off-gas
-    offGasFlow: 0,
-    offGasParticles: [],
-    // Reaction zones inside bath (3 zones)
-    reactionZones: [],
-    // Scrap pieces melting
+    // Crane
+    craneX: 0, craneY: 0,   // crane hook position
+    craneLoad: 'none',       // 'scrap_bucket','hm_ladle','scrap_basket','empty'
+    craneMoving: false, craneTx: 0, craneTy: 0,
+    ladleLevel: 1.0,         // ladle fill 0–1
+    ladlePoured: false,
+    hmLadleWeight: 0,
+    // Scrap bucket
+    scrapBucketX: 0, scrapBucketY: 0,
+    scrapBucketTilted: false,
+    scrapBucketEmpty: false,
+    // Flux hoppers
+    fluxFalling: false, fluxParticles: [],
+    // Lance
+    lanceY: 0,
+    // Gas particles
+    coGas:[], co2Gas:[], sparks:[], slagSplash:[], steamPuffs:[],
+    o2Jets:[], offGasParticles:[], reactionZones:[],
+    // Ferro alloy addition
+    faFalling: false, faParticles: [],
+    // Slag pot
+    slagPotX:0, slagPotFill:0, slagRunning:false,
+    // Steel ladle
+    steelLadleX:0, steelLadleY:0, steelLadleFill:0, tapRunning:false,
+    tapTemp: 0,
+    // Scrap pieces inside vessel
     scrapPieces: [],
-    // Measurements
-    measuredTemp: null, measuredC: null,
+    // Load cell reading
+    loadCell: 0,
+    // Stage animation timer
+    stageTimer: 0,
+    // Sub-lance
+    subLanceY: 0, subLanceDone: false, measuredT: null, measuredC: null,
+    // Roll angle for crane drum
+    drumAngle: 0,
   })
 
   useEffect(() => {
@@ -66,745 +77,848 @@ function BOFCanvas({
       const h = el.parentElement ? el.parentElement.clientHeight : window.innerHeight
       if (w > 0 && h > 0) { el.width = w; el.height = h }
     }
-    fit()
-    const t1 = setTimeout(fit, 100), t2 = setTimeout(fit, 400)
+    fit(); const t1=setTimeout(fit,100),t2=setTimeout(fit,400)
     window.addEventListener('resize', fit)
-    const onMove = (e) => {
-      const rect = el.getBoundingClientRect()
-      mouseRef.current = { x:(e.clientX-rect.left)*(el.width/rect.width), y:(e.clientY-rect.top)*(el.height/rect.height) }
-    }
-    const onLeave = () => { mouseRef.current = { x:-999, y:-999 } }
-    el.addEventListener('mousemove', onMove)
-    el.addEventListener('mouseleave', onLeave)
-    el.addEventListener('touchmove',(e)=>{e.preventDefault();const t2b=e.touches[0],rect=el.getBoundingClientRect();mouseRef.current={x:(t2b.clientX-rect.left)*(el.width/rect.width),y:(t2b.clientY-rect.top)*(el.height/rect.height)}},{passive:false})
-    el.addEventListener('touchend', onLeave)
-    return () => { clearTimeout(t1);clearTimeout(t2);window.removeEventListener('resize',fit);el.removeEventListener('mousemove',onMove);el.removeEventListener('mouseleave',onLeave) }
-  }, [])
+    const onMove=(e)=>{const rect=el.getBoundingClientRect();mouseRef.current={x:(e.clientX-rect.left)*(el.width/rect.width),y:(e.clientY-rect.top)*(el.height/rect.height)}}
+    const onLeave=()=>{mouseRef.current={x:-999,y:-999}}
+    el.addEventListener('mousemove',onMove); el.addEventListener('mouseleave',onLeave)
+    el.addEventListener('touchmove',(e)=>{e.preventDefault();const tb=e.touches[0],rect=el.getBoundingClientRect();mouseRef.current={x:(tb.clientX-rect.left)*(el.width/rect.width),y:(tb.clientY-rect.top)*(el.height/rect.height)}},{passive:false})
+    el.addEventListener('touchend',onLeave)
+    return ()=>{clearTimeout(t1);clearTimeout(t2);window.removeEventListener('resize',fit);el.removeEventListener('mousemove',onMove);el.removeEventListener('mouseleave',onLeave)}
+  },[])
 
-  useEffect(() => {
-    if (!doReset) return
-    const sim = S.current
-    Object.assign(sim, {
-      t:0,frame:0,bathTemp:hmTemp-80,bathC:hmC,bathSi:hmSi,bathMn:hmMn,
-      blowPct:0,blowTime:0,lanceY:0,lanceFlame:0,
-      o2Jets:[],coGas:[],co2Gas:[],slagParticles:[],sparks:[],steamPuffs:[],offGasParticles:[],reactionZones:[],
-      slagThickness:8,slagFoaming:0,slagColor:0,vesselVib:0,
-      subLanceDeploy:false,subLanceY:0,offGasFlow:0,
-      scrapPieces: Array.from({length:6},(_,i)=>({x:(Math.random()-0.5)*0.6,y:0.6+Math.random()*0.25,w:0.06+Math.random()*0.08,h:0.04+Math.random()*0.06,meltFrac:0,temp:25})),
-      measuredTemp:null, measuredC:null,
+  useEffect(()=>{
+    if(!doReset) return
+    const sim=S.current
+    Object.assign(sim,{
+      t:0,frame:0,bathTemp:1265,bathC:hmC,bathSi:hmSi,bathMn:hmMn,
+      bathLevel:0.05,slagThick:0,slagFoam:0,vesselVib:0,
+      craneX:0.12,craneY:0.06,craneLoad:'none',craneMoving:false,
+      ladleLevel:1.0,ladlePoured:false,hmLadleWeight:hmWeight*1000,
+      scrapBucketX:0.85,scrapBucketY:0.10,scrapBucketTilted:false,scrapBucketEmpty:false,
+      fluxFalling:false,fluxParticles:[],
+      lanceY:0,coGas:[],co2Gas:[],sparks:[],slagSplash:[],steamPuffs:[],
+      o2Jets:[],offGasParticles:[],reactionZones:[],
+      faFalling:false,faParticles:[],
+      slagPotX:0.78,slagPotFill:0,slagRunning:false,
+      steelLadleX:0.22,steelLadleY:0.78,steelLadleFill:0,tapRunning:false,tapTemp:0,
+      scrapPieces:[],loadCell:hmWeight*1000,stageTimer:0,
+      subLanceY:0,subLanceDone:false,measuredT:null,measuredC:null,drumAngle:0,
     })
-  }, [doReset])
+  },[doReset])
 
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current
-    if (!canvas) { rafRef.current = requestAnimationFrame(draw); return }
-    const ctx = canvas.getContext('2d')
-    const W = canvas.width, H = canvas.height
-    if (!W || !H || W < 10 || H < 10) {
-      if (canvas.parentElement?.clientWidth > 0) { canvas.width=canvas.parentElement.clientWidth; canvas.height=canvas.parentElement.clientHeight }
-      rafRef.current = requestAnimationFrame(draw); return
+  const draw = useCallback(()=>{
+    const canvas=canvasRef.current
+    if(!canvas){rafRef.current=requestAnimationFrame(draw);return}
+    const ctx=canvas.getContext('2d')
+    const W=canvas.width,H=canvas.height
+    if(!W||!H||W<10||H<10){
+      if(canvas.parentElement?.clientWidth>0){canvas.width=canvas.parentElement.clientWidth;canvas.height=canvas.parentElement.clientHeight}
+      rafRef.current=requestAnimationFrame(draw);return
     }
-    const sim = S.current
-    sim.t += 0.016; sim.frame++
+    const sim=S.current
+    sim.t+=0.016; sim.frame++
 
-    try {
-    // ── LAYOUT ──────────────────────────────────────────────────────────
-    const VCX  = W * 0.40   // vessel centre X
-    const VW   = W * 0.28   // vessel inner width at widest
-    const VT   = H * 0.12   // vessel top Y
-    const VB   = H * 0.88   // vessel bottom Y
-    const VH   = VB - VT    // vessel height
+    try{
+    // ── LAYOUT ────────────────────────────────────────────────────────────
+    const VCX = W*0.52      // vessel centre (shifted right — crane on left)
+    const VW  = W*0.10      // vessel half-width (smaller)
+    const VT  = H*0.22      // vessel top (lower — more crane headroom)
+    const VB  = H*0.88      // vessel bottom
+    const VH  = VB-VT
 
-    // BOF vessel profile (wider at top, narrower at bottom — trunnion ring shape)
-    const vesselHW = (yFrac) => {
-      if (yFrac < 0.08) return VW * 0.55                                          // cone top
-      if (yFrac < 0.20) return VW * 0.55 + (yFrac-0.08)/0.12 * VW * 0.45         // widens to barrel
-      if (yFrac < 0.65) return VW * 1.0                                           // barrel
-      if (yFrac < 0.82) return VW * 1.0 - (yFrac-0.65)/0.17 * VW * 0.28          // narrows to bottom
-      return VW * 0.72                                                             // bottom dome
+    // BOF profile: mouth narrows, belly wide, bottom dome
+    const vHW=(yf)=>{
+      if(yf<0.08) return VW*0.52+(yf/0.08)*VW*0.18        // mouth → shoulder
+      if(yf<0.22) return VW*0.70+(yf-0.08)/0.14*VW*0.30   // shoulder → belly
+      if(yf<0.65) return VW                                 // belly
+      if(yf<0.82) return VW-(yf-0.65)/0.17*VW*0.22         // belly → bosh
+      return VW*0.78                                         // bottom
     }
-    const vHW = (yFrac) => vesselHW(yFrac)
 
-    const BATH_SURFACE_Y = VT + VH * (1 - sim.bathLevel * 0.52)
-    const LANCE_TIP_Y    = VT + VH * 0.28 - (lanceHeight - 1400) / 800 * VH * 0.18
-    const SLAG_Y         = BATH_SURFACE_Y - sim.slagThickness * (1 + sim.slagFoaming * 3)
+    const BATH_Y    = VT+VH*(1-sim.bathLevel*0.56)
+    const SLAG_Y    = BATH_Y - sim.slagThick*(1+sim.slagFoam*2.5)
+    const LANCE_TIP = VT+VH*0.22 - (lanceHeight-1400)/700*VH*0.14
+    const TAPHOLE_Y = VT+VH*0.80
+    const TAPHOLE_X = VCX+vHW(0.80)-4
+    const SLAGHOLE_Y = VT+VH*0.62
+    const SLAGHOLE_X = VCX-vHW(0.62)+4
+    // Crane rail Y
+    const CRANE_RAIL_Y = H*0.04
 
     // ── PHYSICS ──────────────────────────────────────────────────────────
-    if (running && blowPct > 0 && blowPct < 100) {
-      const bp    = blowPct / 100
-      const inten = clamp((o2Flow / 650) * speed, 0.3, 1.2)
+    sim.stageTimer += 0.016
+    const bp  = blowPct/100
+    const inten = clamp((o2Flow/650)*1.1, 0.3, 1.2)
 
-      // Bath temperature model
-      const tgtTemp = hmTemp - 80 + bp * (targetTemp - hmTemp + 120) + (Math.random()-0.5)*6
-      sim.bathTemp  = clamp(sim.bathTemp + (tgtTemp - sim.bathTemp) * 0.025, 1380, 1750)
+    if(stage==='HM_CHARGE'){
+      // Crane moves from left to over vessel, ladle tilts, HM pours, then crane moves back left
+      if(!sim.ladlePoured){
+        sim.craneLoad = 'hm_ladle'
+        // Move crane to vessel centre (from left)
+        const tgX=VCX/W, tgY=(VT-H*0.07)/H
+        sim.craneX+=(tgX-sim.craneX)*0.018; sim.craneY+=(tgY-sim.craneY)*0.018
+        sim.drumAngle+=0.05
+        if(Math.abs(sim.craneX-tgX)<0.015){
+          // Pour
+          sim.ladleLevel=Math.max(0, sim.ladleLevel-0.004)
+          sim.hmLadleWeight=Math.round(sim.ladleLevel*hmWeight*1000)
+          setLadleWeightKg(sim.hmLadleWeight)
+          sim.bathLevel=clamp(sim.bathLevel+(1-sim.ladleLevel)*0.003, 0.05, 0.72)
+          sim.bathTemp=clamp(sim.bathTemp+(hmTemp-sim.bathTemp)*0.01, 1200, 1400)
+          // Pour stream particles
+          if(sim.frame%3===0) sim.steamPuffs.push({x:VCX+(Math.random()-0.5)*12,y:BATH_Y-10,vx:(Math.random()-0.5)*1.5,vy:-1.5-Math.random()*2,life:1,r:5+Math.random()*8})
+          if(sim.ladleLevel<=0) {
+            sim.ladlePoured=true
+            // Crane moves back left after pouring
+            sim.craneX=0.12; sim.craneY=0.06
+          }
+          // Continue to next stage only when crane is back at park
+          if(sim.ladlePoured && Math.abs(sim.craneX-0.12)<0.02) onStageComplete()
+        }
+      }
+    }
+
+    if(stage==='SCRAP_CHARGE'){
+      // Scrap bucket tilts over vessel mouth
+      sim.craneLoad='scrap_bucket'
+      const tgX=VCX/W, tgY=(VT-H*0.08)/H
+      sim.craneX+=(tgX-sim.craneX)*0.018
+      sim.craneY+=(tgY-sim.craneY)*0.018
+      sim.drumAngle+=0.04
+      if(Math.abs(sim.craneX-tgX)<0.02&&!sim.scrapBucketEmpty){
+        sim.scrapBucketTilted=true
+        // Drop scrap pieces
+        if(sim.frame%8===0){
+          sim.scrapPieces.push({
+            x:VCX+(Math.random()-0.5)*vHW(0.5)*0.6,
+            y:BATH_Y+Math.random()*(VB-BATH_Y)*0.7,
+            w:clamp(W*0.025,12,24), h:clamp(H*0.014,6,12),
+            temp:25, meltFrac:0, angle:(Math.random()-0.5)*0.8
+          })
+        }
+        if(sim.stageTimer>6){sim.scrapBucketEmpty=true; onStageComplete()}
+      }
+    }
+
+    if(stage==='FLUX_CHARGE'){
+      sim.fluxFalling=true
+      const LIME_X=VCX-W*0.25, DOLO_X=VCX-W*0.18
+      // Lime particles (white-grey)
+      if(sim.frame%3===0){
+        sim.fluxParticles.push({x:LIME_X+(Math.random()-0.5)*W*0.02, y:H*0.18, vy:4+Math.random()*5, life:1, r:2+Math.random()*3, col:'rgba(200,205,190,0.82)'})
+      }
+      // Dolomite particles (beige)
+      if(sim.frame%3===1){
+        sim.fluxParticles.push({x:DOLO_X+(Math.random()-0.5)*W*0.02, y:H*0.18, vy:4+Math.random()*5, life:1, r:2+Math.random()*3, col:'rgba(195,165,105,0.80)'})
+      }
+      // Also general particles into vessel
+      if(sim.frame%4===0){
+        sim.fluxParticles.push({x:VCX+(Math.random()-0.5)*vHW(0.1)*0.5, y:VT+15, vy:3+Math.random()*3, life:1, r:1.5+Math.random()*2.5, col:'rgba(185,195,155,0.72)'})
+      }
+      if(sim.stageTimer>5){sim.fluxFalling=false; onStageComplete()}
+    }
+
+    if(stage==='BLOWING'&&running){
+      // Lance descends to set height
+      const lanceTgt=LANCE_TIP
+      sim.lanceY+=(lanceTgt-sim.lanceY)*0.03
+      sim.vesselVib=Math.sin(sim.t*14)*inten*1.8
+
+      // Temperatures
+      const tgtT=hmTemp-80+bp*(targetTemp-hmTemp+130)+(Math.random()-0.5)*5
+      sim.bathTemp=clamp(sim.bathTemp+(tgtT-sim.bathTemp)*0.022, 1380,1750)
       setCurrentTemp(Math.round(sim.bathTemp))
-
-      // Carbon removal (exponential decay)
-      const tgtC = hmC * Math.exp(-0.038 * blowPct) + 0.018
-      sim.bathC  = clamp(sim.bathC + (tgtC - sim.bathC) * 0.04, 0.015, hmC)
+      const tgtC=hmC*Math.exp(-0.038*blowPct)+0.018
+      sim.bathC=clamp(sim.bathC+(tgtC-sim.bathC)*0.03, 0.015, hmC)
       setCurrentC(sim.bathC.toFixed(3))
+      sim.bathSi=Math.max(0.002,hmSi*Math.exp(-0.055*blowPct))
+      sim.bathMn=Math.max(0.05,hmMn*Math.exp(-0.028*blowPct))
+      sim.slagThick=clamp(6+bp*55+inten*18, 6,110)
+      sim.slagFoam=clamp(inten*0.4+(bp>0.3&&bp<0.7?0.45:0.1), 0,1)
 
-      // Si, Mn oxidation
-      sim.bathSi = Math.max(0.002, hmSi * Math.exp(-0.055 * blowPct))
-      sim.bathMn = Math.max(0.05,  hmMn * Math.exp(-0.028 * blowPct))
-
-      // Slag thickness & foaming
-      sim.slagThickness = clamp(8 + bp * 60 + inten * 20, 8, 120)
-      sim.slagFoaming   = clamp(inten * 0.4 + (bp > 0.3 && bp < 0.7 ? 0.5 : 0.1), 0, 1.0)
-      sim.slagColor     = clamp(sim.bathTemp / 1700, 0.6, 1.0)
-
-      // Lance flame intensity
-      sim.lanceFlame = clamp(inten * (0.7 + 0.3 * Math.sin(sim.t * 8)), 0.3, 1.0)
-
-      // Vessel vibration from O2 impact
-      sim.vesselVib = Math.sin(sim.t * 14) * inten * 2.5
-
-      // Off-gas flow
-      sim.offGasFlow = clamp(inten * (0.5 + bp * 0.5), 0.2, 1.0)
-
-      // Sub-lance at 85%
-      if (blowPct >= 85 && !sim.subLanceDeploy) {
-        sim.subLanceDeploy = true
-        sim.measuredTemp = Math.round(sim.bathTemp - 5 + (Math.random()-0.5)*8)
-        sim.measuredC    = (sim.bathC + 0.002).toFixed(3)
-      }
-      if (sim.subLanceDeploy) sim.subLanceY = clamp(sim.subLanceY + 2, 0, BATH_SURFACE_Y - VT - 20)
-
-      // ── PARTICLES ─────────────────────────────────────────────────────
-      // O2 jets from lance (4 jets downward at angles)
-      if (sim.frame % 2 === 0) {
-        ;[-0.35,-0.12,0.12,0.35].forEach(angle => {
-          sim.o2Jets.push({
-            x: VCX + Math.sin(angle)*8, y: LANCE_TIP_Y,
-            vx: Math.sin(angle)*(2.5+inten*3), vy: 3+inten*4+Math.random()*2,
-            life: 1, r: 2+Math.random()*2, col: 'rgba(100,180,255,0.75)'
-          })
+      // Particles
+      if(sim.frame%2===0){
+        ;[-0.32,-0.10,0.10,0.32].forEach(a=>{
+          sim.o2Jets.push({x:VCX+Math.sin(a)*8,y:sim.lanceY,vx:Math.sin(a)*(2.5+inten*3),vy:3.5+inten*4,life:1,r:1.5+Math.random()*2})
         })
       }
-
-      // CO gas rising from impact zone (O2 + C → CO)
-      if (sim.frame % 3 === 0) {
-        const impX = VCX + (Math.random()-0.5)*vHW(0.5)*0.8
-        sim.coGas.push({
-          x: impX, y: BATH_SURFACE_Y - 5,
-          vx: (Math.random()-0.5)*1.8,
-          vy: -(1.5+Math.random()*3)*inten,
-          life: 1, r: 2+Math.random()*4,
-          col: `rgba(${180+Math.round(Math.random()*40)},${155+Math.round(Math.random()*35)},50,0.52)`
-        })
+      if(sim.frame%3===0){
+        sim.coGas.push({x:VCX+(Math.random()-0.5)*vHW(0.5)*0.8,y:BATH_Y-5,vx:(Math.random()-0.5)*1.6,vy:-(1.5+Math.random()*3)*inten,life:1,r:2+Math.random()*4,col:`rgba(${175+Math.round(Math.random()*40)},${148+Math.round(Math.random()*30)},48,0.52)`})
       }
-
-      // Post-combustion CO→CO2 in upper vessel
-      if (sim.frame % 5 === 0) {
-        sim.co2Gas.push({
-          x: VCX + (Math.random()-0.5)*vHW(0.2)*0.6,
-          y: SLAG_Y - 20 - Math.random()*30,
-          vx: (Math.random()-0.5)*1.2, vy: -(0.8+Math.random()*1.5),
-          life: 1, r: 3+Math.random()*4,
-          col: 'rgba(120,155,70,0.48)'
-        })
+      if(sim.frame%5===0) sim.co2Gas.push({x:VCX+(Math.random()-0.5)*vHW(0.2)*0.5,y:SLAG_Y-25-Math.random()*25,vx:(Math.random()-0.5)*1.1,vy:-(0.8+Math.random()*1.4),life:1,r:3+Math.random()*4,col:'rgba(115,148,62,0.46)'})
+      if(sim.slagFoam>0.25&&sim.frame%4===0){
+        ;[-1,1].forEach(side=>{sim.slagSplash.push({x:VCX+side*(vHW(0.45)*0.55+Math.random()*vHW(0.45)*0.3),y:SLAG_Y+5,vx:side*(1.5+Math.random()*3)*inten,vy:-(2+Math.random()*4)*inten,life:1,r:1.5+Math.random()*3,col:heatColor(sim.bathTemp-60,1350,1700)})})
       }
-
-      // Slag splash particles
-      if (sim.slagFoaming > 0.3 && sim.frame % 4 === 0) {
-        ;[-1,1].forEach(side => {
-          sim.slagParticles.push({
-            x: VCX + side*(vHW(0.45)*0.6+Math.random()*vHW(0.45)*0.3),
-            y: SLAG_Y + 5,
-            vx: side*(1.5+Math.random()*3)*inten,
-            vy: -(2+Math.random()*4)*inten,
-            life: 1, r: 1.5+Math.random()*3,
-            col: heatColor(sim.bathTemp-80, 1350, 1700)
-          })
-        })
-      }
-
-      // Metal sparks (ejected through mouth)
-      if (inten > 0.7 && sim.frame % 6 === 0) {
-        sim.sparks.push({
-          x: VCX + (Math.random()-0.5)*vHW(0.05)*0.5,
-          y: VT + VH * 0.05,
-          vx: (Math.random()-0.5)*5, vy: -3-Math.random()*5,
-          life: 1, r: 1+Math.random()*2,
-          col: Math.random()>0.5?'#FFD54F':'#FF6D00'
-        })
-      }
-
-      // Early blow steam (scrap moisture)
-      if (blowPct < 15 && sim.frame % 6 === 0) {
-        sim.steamPuffs.push({
-          x: VCX+(Math.random()-0.5)*vHW(0.5)*0.5, y: SLAG_Y-10,
-          vx:(Math.random()-0.5)*1.5, vy:-1.5-Math.random(),
-          life:1, r:4+Math.random()*6
-        })
-      }
-
-      // Off-gas hood particles
-      if (sim.frame % 3 === 0) {
-        sim.offGasParticles.push({
-          x: VCX+(Math.random()-0.5)*vHW(0.02)*0.4, y: VT-8,
-          vx:(Math.random()-0.5)*2, vy:-1.8-Math.random()*2.5,
-          life:1, r:3+Math.random()*4,
-          col:`rgba(${130+Math.round(Math.random()*40)},${120+Math.round(Math.random()*30)},70,0.45)`
-        })
-      }
-
-      // Reaction zones (3 distinct zones in bath)
-      if (sim.frame % 8 === 0) {
-        sim.reactionZones.push({
-          x: VCX+(Math.random()-0.5)*vHW(0.5)*0.7,
-          y: BATH_SURFACE_Y-5-Math.random()*VH*0.15,
-          r: 8+Math.random()*20, life:1,
-          type: Math.random()<0.5?'co':'oxidation'
-        })
-      }
-
+      if(inten>0.65&&sim.frame%5===0) sim.sparks.push({x:VCX+(Math.random()-0.5)*vHW(0.05)*0.4,y:VT+VH*0.04,vx:(Math.random()-0.5)*5,vy:-3-Math.random()*5,life:1,r:1+Math.random()*2,col:Math.random()>0.5?'#FFD54F':'#FF6D00'})
+      if(bp<0.12&&sim.frame%5===0) sim.steamPuffs.push({x:VCX+(Math.random()-0.5)*vHW(0.5)*0.45,y:SLAG_Y-8,vx:(Math.random()-0.5)*1.4,vy:-1.4-Math.random(),life:1,r:4+Math.random()*6})
+      if(sim.frame%3===0) sim.offGasParticles.push({x:VCX+(Math.random()-0.5)*vHW(0.02)*0.35,y:VT-10,vx:(Math.random()-0.5)*1.8,vy:-1.8-Math.random()*2.2,life:1,r:3+Math.random()*4,col:`rgba(${128+Math.round(Math.random()*38)},${115+Math.round(Math.random()*28)},62,0.42)`})
+      if(sim.frame%8===0) sim.reactionZones.push({x:VCX+(Math.random()-0.5)*vHW(0.5)*0.65,y:BATH_Y-5-Math.random()*VH*0.14,r:8+Math.random()*18,life:1})
       // Scrap melting
-      sim.scrapPieces = sim.scrapPieces.map(sc => {
-        const newTemp = sc.temp + (sim.bathTemp - sc.temp) * 0.006
-        const newMelt = Math.min(1, sc.meltFrac + 0.002 * (sim.bathTemp/1500))
-        return {...sc, temp: newTemp, meltFrac: newMelt}
-      }).filter(sc => sc.meltFrac < 1.0)
+      sim.scrapPieces=sim.scrapPieces.map(sc=>({...sc,temp:sc.temp+(sim.bathTemp-sc.temp)*0.005,meltFrac:Math.min(1,sc.meltFrac+0.0015)})).filter(sc=>sc.meltFrac<1)
+    }
 
-      onDataUpdate({
-        bathTemp: sim.bathTemp, bathC: sim.bathC,
-        bathSi: sim.bathSi, bathMn: sim.bathMn,
-        slagFoaming: sim.slagFoaming, offGasFlow: sim.offGasFlow,
-        o2Consumed: blowPct * hmWeight * hmC / 100 * 1.333 / 100,
-      })
+    if(stage==='SUBLANCE'){
+      sim.subLanceY=Math.min(BATH_Y-VT-30, sim.subLanceY+1.5)
+      if(sim.subLanceY>BATH_Y-VT-40&&!sim.subLanceDone){
+        sim.subLanceDone=true
+        sim.measuredT=Math.round(sim.bathTemp-3+(Math.random()-0.5)*8)
+        sim.measuredC=(sim.bathC+0.002).toFixed(3)
+        setTimeout(()=>onStageComplete(),2000)
+      }
+    }
+
+    if(stage==='FERRO_ALLOY'){
+      sim.faFalling=true
+      if(sim.frame%3===0){
+        sim.faParticles.push({x:VCX+(Math.random()-0.5)*vHW(0.1)*0.3,y:VT+8,vy:3.5+Math.random()*4,life:1,r:1.5+Math.random()*2.5,col:Math.random()>0.5?'rgba(180,140,80,0.78)':'rgba(200,160,60,0.72)'})
+      }
+      if(sim.stageTimer>5){sim.faFalling=false; onStageComplete()}
+    }
+
+    if(stage==='SLAG_OUT'){
+      sim.slagRunning=true
+      sim.slagPotFill=Math.min(1, sim.slagPotFill+0.006)
+      sim.slagThick=Math.max(0,sim.slagThick-0.5)
+      if(sim.slagPotFill>=1){sim.slagRunning=false; onStageComplete()}
+    }
+
+    if(stage==='TAPPING'){
+      sim.tapRunning=true
+      sim.steelLadleFill=Math.min(1, sim.steelLadleFill+0.005)
+      sim.bathLevel=Math.max(0.03, sim.bathLevel-0.004)
+      sim.bathTemp=Math.max(1580, sim.bathTemp-0.05)
+      sim.tapTemp=Math.round(sim.bathTemp-15+(Math.random()-0.5)*5)
+      setCurrentTemp(sim.tapTemp)
+      if(sim.frame%4===0) sim.sparks.push({x:TAPHOLE_X+10+(Math.random()-0.5)*15,y:TAPHOLE_Y+(Math.random()-0.5)*6,vx:2+Math.random()*4,vy:(Math.random()-0.5)*3,life:1,r:1+Math.random()*2,col:Math.random()>0.5?'#FFD54F':'#FF6D00'})
+      if(sim.steelLadleFill>=1){sim.tapRunning=false; onStageComplete()}
     }
 
     // Advance particles
-    sim.o2Jets        = sim.o2Jets.filter(p=>p.life>0&&p.y<BATH_SURFACE_Y+10).map(p=>({...p,x:p.x+p.vx*0.5,y:p.y+p.vy,life:p.life-0.06}))
-    sim.coGas         = sim.coGas.filter(p=>p.life>0&&p.y>VT-20).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.01}))
-    sim.co2Gas        = sim.co2Gas.filter(p=>p.life>0&&p.y>VT-30).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.015}))
-    sim.slagParticles = sim.slagParticles.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,vy:p.vy+0.2,life:p.life-0.04}))
-    sim.sparks        = sim.sparks.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,vy:p.vy+0.28,life:p.life-0.05}))
-    sim.steamPuffs    = sim.steamPuffs.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,r:p.r+0.5,life:p.life-0.025}))
-    sim.offGasParticles=sim.offGasParticles.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.018}))
-    sim.reactionZones = sim.reactionZones.filter(p=>p.life>0).map(p=>({...p,life:p.life-0.04}))
+    sim.o2Jets        = sim.o2Jets.filter(p=>p.life>0&&p.y<BATH_Y+8).map(p=>({...p,x:p.x+p.vx*0.4,y:p.y+p.vy,life:p.life-0.06}))
+    sim.coGas         = sim.coGas.filter(p=>p.life>0&&p.y>VT-20).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.010}))
+    sim.co2Gas        = sim.co2Gas.filter(p=>p.life>0&&p.y>VT-28).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.014}))
+    sim.slagSplash    = sim.slagSplash.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,vy:p.vy+0.2,life:p.life-0.04}))
+    sim.sparks        = sim.sparks.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,vy:p.vy+0.25,life:p.life-0.05}))
+    sim.steamPuffs    = sim.steamPuffs.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,r:p.r+0.45,life:p.life-0.022}))
+    sim.offGasParticles=sim.offGasParticles.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.017}))
+    sim.reactionZones  =sim.reactionZones.filter(p=>p.life>0).map(p=>({...p,life:p.life-0.038}))
+    sim.fluxParticles  =sim.fluxParticles.filter(p=>p.life>0&&p.y<BATH_Y).map(p=>({...p,y:p.y+p.vy,life:p.life-0.016}))
+    sim.faParticles    =sim.faParticles.filter(p=>p.life>0&&p.y<BATH_Y).map(p=>({...p,y:p.y+p.vy,life:p.life-0.018}))
 
     // ── DRAW ─────────────────────────────────────────────────────────────
-    ctx.fillStyle = '#06090f'; ctx.fillRect(0,0,W,H)
+    ctx.fillStyle='#06090f'; ctx.fillRect(0,0,W,H)
     ctx.strokeStyle='rgba(255,255,255,0.015)'; ctx.lineWidth=0.5
     for(let gx=0;gx<W;gx+=36){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,H);ctx.stroke()}
     for(let gy=0;gy<H;gy+=36){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(W,gy);ctx.stroke()}
 
-    const lbl=(t,x,y,c='#78909C',sz=9,align='center')=>{ctx.fillStyle=c;ctx.font=`${sz}px monospace`;ctx.textAlign=align;ctx.fillText(t,x,y)}
-    const lblB=(t,x,y,c='#78909C',sz=9,align='center')=>{ctx.fillStyle=c;ctx.font=`bold ${sz}px monospace`;ctx.textAlign=align;ctx.fillText(t,x,y)}
+    const lbl=(t,x,y,c='#78909C',sz=9,al='center')=>{ctx.fillStyle=c;ctx.font=`${sz}px monospace`;ctx.textAlign=al;ctx.fillText(t,x,y)}
+    const lblB=(t,x,y,c='#78909C',sz=9,al='center')=>{ctx.fillStyle=c;ctx.font=`bold ${sz}px monospace`;ctx.textAlign=al;ctx.fillText(t,x,y)}
 
-    // ── TRUNNION RING & SUPPORT ───────────────────────────────────────────
-    const TRUNNION_Y = VT + VH * 0.42
-    ctx.fillStyle='#1a2535'; ctx.strokeStyle='#2c4055'; ctx.lineWidth=2
-    ctx.fillRect(VCX-vHW(0.42)-W*0.055,TRUNNION_Y-8,W*0.05,16); ctx.strokeRect(VCX-vHW(0.42)-W*0.055,TRUNNION_Y-8,W*0.05,16)
-    ctx.fillRect(VCX+vHW(0.42)+W*0.005,TRUNNION_Y-8,W*0.05,16); ctx.strokeRect(VCX+vHW(0.42)+W*0.005,TRUNNION_Y-8,W*0.05,16)
-    // Support columns
-    ;[-1,1].forEach(side=>{
-      const tx=VCX+side*(vHW(0.42)+W*0.03)
-      ctx.fillStyle='#141e2c'; ctx.fillRect(tx-6,TRUNNION_Y,12,H*0.20)
+    // ── CRANE GANTRY ──────────────────────────────────────────────────────
+    // Runway rails (horizontal beams at top)
+    ctx.fillStyle='#1a2535'; ctx.fillRect(0,CRANE_RAIL_Y,W,8)
+    ctx.fillStyle='#263340'; ctx.fillRect(0,CRANE_RAIL_Y+2,W,4)
+    // Cross beams
+    ;[W*0.15,W*0.40,W*0.65,W*0.85].forEach(bx=>{
+      ctx.fillStyle='#1a2535'; ctx.fillRect(bx-3,0,6,CRANE_RAIL_Y+8)
     })
-    lbl('TRUNNION RING',VCX+vHW(0.42)+W*0.065,TRUNNION_Y+4,'#1e3040',clamp(W*0.009,7,9),'left')
+    lbl('CRANE GANTRY RUNWAY',W*0.5,CRANE_RAIL_Y-4,'#1e3040',clamp(W*0.009,7,9))
 
-    // ── BOF VESSEL SHELL ─────────────────────────────────────────────────
-    // Draw the vessel profile
+    // Crane bridge (moves along runway)
+    const CRANE_BX = sim.craneX*W
+    ctx.fillStyle='#1e2d3d'; ctx.strokeStyle='#2c4055'; ctx.lineWidth=1.5
+    ctx.fillRect(CRANE_BX-W*0.10,CRANE_RAIL_Y+8,W*0.20,H*0.030)
+    ctx.strokeRect(CRANE_BX-W*0.10,CRANE_RAIL_Y+8,W*0.20,H*0.030)
+    // Crane drum
+    ctx.save(); ctx.translate(CRANE_BX,CRANE_RAIL_Y+14)
+    ctx.rotate(sim.drumAngle)
+    ctx.fillStyle='#263340'; ctx.strokeStyle='#37474F'; ctx.lineWidth=0.8
+    ctx.beginPath(); ctx.arc(0,0,7,0,Math.PI*2); ctx.fill(); ctx.stroke()
+    ctx.strokeStyle='rgba(100,140,180,0.5)'; ctx.lineWidth=0.8; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(5,0); ctx.stroke()
+    ctx.restore()
+    // Hoist rope
+    const HOOK_Y = sim.craneY*H
+    ctx.strokeStyle='#37474F'; ctx.lineWidth=2
+    ctx.beginPath(); ctx.moveTo(CRANE_BX,CRANE_RAIL_Y+22); ctx.lineTo(CRANE_BX,HOOK_Y); ctx.stroke()
+    // Hook
+    ctx.fillStyle='#455A64'; ctx.strokeStyle='#607D8B'; ctx.lineWidth=1
+    ctx.beginPath(); ctx.arc(CRANE_BX,HOOK_Y,6,0,Math.PI*2); ctx.fill(); ctx.stroke()
+
+    // Load cell display on crane bridge
+    const lcVal = stage==='HM_CHARGE' ? sim.hmLadleWeight :
+                  stage==='SCRAP_CHARGE' ? Math.round(scrapWeight*1000*(sim.scrapBucketEmpty?0:1)) :
+                  stage==='FLUX_CHARGE' ? Math.round(fluxWeight*1000*(sim.fluxFalling?0.5:1)) : 0
+    if(lcVal>0||stage==='HM_CHARGE'){
+      ctx.fillStyle='rgba(4,12,28,0.85)'; ctx.fillRect(CRANE_BX+W*0.09,CRANE_RAIL_Y+6,W*0.10,H*0.025)
+      ctx.strokeStyle='#1e3040'; ctx.lineWidth=0.6; ctx.strokeRect(CRANE_BX+W*0.09,CRANE_RAIL_Y+6,W*0.10,H*0.025)
+      lblB('LOAD CELL',CRANE_BX+W*0.14,CRANE_RAIL_Y+13,'#29B6F6',clamp(W*0.008,6,8))
+      lblB(`${Math.round(lcVal/1000*10)/10} t`,CRANE_BX+W*0.14,CRANE_RAIL_Y+23,stage==='HM_CHARGE'?'#FF8F00':'#78909C',clamp(W*0.010,8,11))
+    }
+
+    // ── SCRAP BUCKET (when stage=SCRAP_CHARGE, hangs from crane) ─────────
+    if(stage==='SCRAP_CHARGE'||sim.scrapBucketTilted){
+      const BKX=CRANE_BX, BKY=HOOK_Y+8
+      const tilt = sim.scrapBucketTilted ? Math.PI*0.55 : 0
+      ctx.save(); ctx.translate(BKX,BKY+H*0.06); ctx.rotate(tilt)
+      ctx.fillStyle='#263340'; ctx.strokeStyle='#37474F'; ctx.lineWidth=1.2
+      ctx.beginPath()
+      ctx.moveTo(-W*0.04,0); ctx.lineTo(W*0.04,0)
+      ctx.lineTo(W*0.034,H*0.09); ctx.lineTo(-W*0.034,H*0.09); ctx.closePath()
+      ctx.fill(); ctx.stroke()
+      if(!sim.scrapBucketEmpty){
+        ctx.fillStyle='rgba(35,32,26,0.9)'; ctx.fillRect(-W*0.036,4,W*0.072,H*0.08)
+        for(let si=0;si<5;si++){
+          ctx.fillStyle='rgba(50,48,40,0.7)'; ctx.fillRect(-W*0.03+si*W*0.014,8,W*0.012,H*0.04)
+        }
+      }
+      ctx.restore()
+      // Rope from hook to bucket
+      ctx.strokeStyle='#37474F'; ctx.lineWidth=1.5
+      ctx.beginPath(); ctx.moveTo(BKX-W*0.02,HOOK_Y+8); ctx.lineTo(BKX-W*0.04+tilt*W*0.02,BKY+H*0.06); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(BKX+W*0.02,HOOK_Y+8); ctx.lineTo(BKX+W*0.04+tilt*W*0.02,BKY+H*0.06); ctx.stroke()
+      if(!sim.scrapBucketEmpty){
+        const wt=Math.round(scrapWeight*1000)
+        lbl(`${scrapWeight}t SCRAP BUCKET`,BKX,BKY+H*0.17,'#78909C',clamp(W*0.009,7,9))
+      }
+    }
+
+    // ── HM LADLE (hangs from crane when stage=HM_CHARGE) ─────────────────
+    if(stage==='HM_CHARGE'||stage==='BLOWING'||stage==='SUBLANCE'||stage==='SLAG_OUT'||stage==='TAPPING'){
+      // After pouring, crane moves back LEFT with empty ladle
+      const ladleParked = (sim.ladlePoured||stage!=='HM_CHARGE')
+      // Empty ladle parks at left side (crane moves away from vessel)
+      const LDX = ladleParked ? W*0.10 : CRANE_BX
+      const LDY = ladleParked ? H*0.32 : HOOK_Y+8
+      const LW=W*0.08, LH=H*0.14
+      const tiltAng = (!sim.ladlePoured && stage==='HM_CHARGE' && Math.abs(sim.craneX-VCX/W)<0.02) ? -Math.PI*0.50 : 0
+
+      ctx.save(); ctx.translate(LDX, LDY+LH*0.5); ctx.rotate(tiltAng)
+      // Ladle shell
+      ctx.fillStyle='#263340'; ctx.strokeStyle='#37474F'; ctx.lineWidth=1.5
+      ctx.beginPath()
+      ctx.moveTo(-LW/2,0); ctx.lineTo(LW/2,0)
+      ctx.lineTo(LW/2-LW*0.08,LH/2); ctx.lineTo(-LW/2+LW*0.08,LH/2); ctx.closePath()
+      ctx.fill(); ctx.stroke()
+      // Steel in ladle
+      if(sim.ladleLevel>0.02){
+        const lf=sim.ladleLevel
+        const ly=-LH/2*0.8+LH*(0.8-lf*0.7)
+        const lg=ctx.createLinearGradient(0,ly,0,LH/2)
+        lg.addColorStop(0,`rgba(255,${Math.round(100+40*Math.sin(sim.t*3))},0,0.95)`)
+        lg.addColorStop(1,'rgba(190,40,0,0.80)')
+        ctx.fillStyle=lg
+        ctx.beginPath()
+        ctx.moveTo(-LW/2+LW*0.08*(1-lf),ly); ctx.lineTo(LW/2-LW*0.08*(1-lf),ly)
+        ctx.lineTo(LW/2-LW*0.08,LH/2); ctx.lineTo(-LW/2+LW*0.08,LH/2); ctx.closePath()
+        ctx.fill()
+        // Meniscus shimmer
+        ctx.fillStyle=`rgba(255,200,50,${0.25+0.18*Math.sin(sim.t*4)})`
+        ctx.fillRect(-LW/2+LW*0.08*(1-lf),ly,LW-LW*0.16*(1-lf),3)
+      }
+      // Trunnion pins
+      ctx.fillStyle='#37474F'; ctx.beginPath(); ctx.arc(-LW/2-6,0,5,0,Math.PI*2); ctx.fill()
+      ctx.beginPath(); ctx.arc(LW/2+6,0,5,0,Math.PI*2); ctx.fill()
+      ctx.restore()
+
+      // Rope (when being lifted)
+      if(!ladleParked){
+        ctx.strokeStyle='#37474F'; ctx.lineWidth=1.5
+        ctx.beginPath(); ctx.moveTo(LDX-LW*0.1,HOOK_Y+8); ctx.lineTo(LDX-LW/2+4,LDY+LH*0.08); ctx.stroke()
+        ctx.beginPath(); ctx.moveTo(LDX+LW*0.1,HOOK_Y+8); ctx.lineTo(LDX+LW/2-4,LDY+LH*0.08); ctx.stroke()
+      }
+      // Pour stream
+      if(tiltAng!==0&&sim.ladleLevel>0){
+        const streamX=LDX+LW*0.4, streamY=LDY+LH*0.5
+        const sg=ctx.createLinearGradient(streamX,streamY,VCX,BATH_Y)
+        sg.addColorStop(0,'rgba(255,100,0,0.92)'); sg.addColorStop(1,'rgba(255,70,0,0.45)')
+        ctx.strokeStyle=sg; ctx.lineWidth=clamp(sim.ladleLevel*12,4,14)
+        ctx.beginPath(); ctx.moveTo(streamX,streamY)
+        ctx.bezierCurveTo(streamX+20,streamY+30,VCX-10,BATH_Y-30,VCX,BATH_Y)
+        ctx.stroke()
+        // Splash at impact
+        const spGrd=ctx.createRadialGradient(VCX,BATH_Y,2,VCX,BATH_Y,28)
+        spGrd.addColorStop(0,'rgba(255,120,0,0.55)'); spGrd.addColorStop(1,'rgba(255,80,0,0)')
+        ctx.fillStyle=spGrd; ctx.fillRect(VCX-32,BATH_Y-18,64,36)
+      }
+      // Ladle label
+      lblB('HOT METAL LADLE',LDX,LDY-8,'#FF7043',clamp(W*0.009,7,10))
+      lbl(`${(sim.ladleLevel*hmWeight).toFixed(1)}t  ${hmTemp}°C`,LDX,LDY+LH+14,sim.ladleLevel>0.05?'#FF8F00':'#546E7A',clamp(W*0.009,7,9))
+      lbl(`C:${hmC}% Si:${hmSi}%`,LDX,LDY+LH+24,'rgba(200,180,150,0.65)',clamp(W*0.008,6,8))
+    }
+
+    // ── FLUX HOPPERS (above vessel, left side with conveyor chute) ──────
+    const FLUX_HX=[VCX-W*0.25, VCX-W*0.18]
+    const fluxOpen=stage==='FLUX_CHARGE'&&sim.fluxFalling
+    FLUX_HX.forEach((hx,hi)=>{
+      const HY2=H*0.08, HW2=W*0.055, HH2=H*0.11
+      // Hopper structure
+      ctx.fillStyle='#1e2d3d'; ctx.strokeStyle='#2c4055'; ctx.lineWidth=1.2
+      ctx.beginPath()
+      ctx.moveTo(hx-HW2/2,HY2); ctx.lineTo(hx+HW2/2,HY2)
+      ctx.lineTo(hx+HW2/2-5,HY2+HH2); ctx.lineTo(hx-HW2/2+5,HY2+HH2); ctx.closePath()
+      ctx.fill(); ctx.stroke()
+      // Hopper top frame
+      ctx.fillStyle='#263340'; ctx.fillRect(hx-HW2/2-3,HY2-4,HW2+6,6); ctx.strokeRect(hx-HW2/2-3,HY2-4,HW2+6,6)
+      // Material fill inside hopper
+      const matCol=hi===0?'rgba(210,215,195,0.82)':'rgba(195,165,105,0.82)'
+      const fillH=HH2*0.78
+      ctx.fillStyle=matCol
+      ctx.beginPath()
+      ctx.moveTo(hx-HW2/2+5,HY2+8); ctx.lineTo(hx+HW2/2-5,HY2+8)
+      ctx.lineTo(hx+HW2/2-5,HY2+fillH); ctx.lineTo(hx-HW2/2+5,HY2+fillH); ctx.closePath(); ctx.fill()
+      // Gate indicator
+      ctx.fillStyle=fluxOpen?'#FF8F00':'#263340'; ctx.fillRect(hx-5,HY2+HH2-4,10,8)
+      ctx.strokeStyle=fluxOpen?'#FFB300':'#37474F'; ctx.lineWidth=0.8; ctx.strokeRect(hx-5,HY2+HH2-4,10,8)
+      // Chute pipe to vessel
+      ctx.strokeStyle='#1a2535'; ctx.lineWidth=6
+      ctx.beginPath(); ctx.moveTo(hx,HY2+HH2+4); ctx.bezierCurveTo(hx,HY2+HH2+H*0.04,VCX-VW*0.8,VT-H*0.02,VCX-VW*0.5,VT+4); ctx.stroke()
+      if(fluxOpen){
+        // Flowing material stream
+        const mStream=hi===0?'rgba(210,215,195,0.75)':'rgba(195,165,105,0.75)'
+        const fg2=ctx.createLinearGradient(hx,HY2+HH2,VCX-VW*0.5,VT)
+        fg2.addColorStop(0,mStream); fg2.addColorStop(1,mStream.replace('0.75','0.25'))
+        ctx.strokeStyle=fg2; ctx.lineWidth=7
+        ctx.beginPath(); ctx.moveTo(hx,HY2+HH2+4); ctx.bezierCurveTo(hx,HY2+HH2+H*0.04,VCX-VW*0.8,VT-H*0.02,VCX-VW*0.5,VT+4); ctx.stroke()
+      }
+      lblB(hi===0?'LIME HOPPER':'DOLO HOPPER',hx,HY2-8,fluxOpen?'#A5D6A7':'#37474F',clamp(W*0.009,7,9))
+      lbl(hi===0?'CaO':'CaO·MgO',hx,HY2+HH2+16,fluxOpen?'#8BC34A':'#37474F',clamp(W*0.008,6,8))
+    })
+
+    // Flux particles
+    sim.fluxParticles.forEach(p=>{
+      ctx.globalAlpha=p.life*0.75; ctx.fillStyle=p.col
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
+    }); ctx.globalAlpha=1
+
+    // ── BOF VESSEL SHELL ──────────────────────────────────────────────────
     const steps=60
     const leftPts=[], rightPts=[]
     for(let s=0;s<=steps;s++){
       const yf=s/steps, y=VT+yf*VH, hw=vHW(yf)
-      leftPts.push([VCX-hw, y+sim.vesselVib*0.3])
-      rightPts.push([VCX+hw, y+sim.vesselVib*0.3])
+      leftPts.push([VCX-hw, y+sim.vesselVib*0.25])
+      rightPts.push([VCX+hw, y+sim.vesselVib*0.25])
     }
-    // Shell fill
+    // Shell
     ctx.beginPath(); ctx.moveTo(...leftPts[0])
     leftPts.forEach(p=>ctx.lineTo(...p))
     rightPts.slice().reverse().forEach(p=>ctx.lineTo(...p))
     ctx.closePath(); ctx.fillStyle='#1a2535'; ctx.fill()
     ctx.strokeStyle='#2c4055'; ctx.lineWidth=2.5; ctx.stroke()
 
-    // Refractory lining
-    ctx.save()
-    ctx.beginPath(); ctx.moveTo(...leftPts[0])
-    leftPts.forEach(p=>ctx.lineTo(...p))
-    rightPts.slice().reverse().forEach(p=>ctx.lineTo(...p))
-    ctx.closePath(); ctx.clip()
-    ctx.fillStyle='#1e1208'; ctx.fillRect(VCX-VW*1.2,VT,VW*2.4,VH)
-    // Lining thickness
-    const LINING=clamp(W*0.022,14,28)
-    ctx.fillStyle='#2c1a08'; ctx.fillRect(VCX-vHW(0.5)+LINING,VT,vHW(0.5)*2-LINING*2,VH)
-    ctx.restore()
-
-    // ── LIQUID STEEL BATH ─────────────────────────────────────────────────
+    // Clip interior
     ctx.save()
     ctx.beginPath(); ctx.moveTo(...leftPts[0])
     leftPts.forEach(p=>ctx.lineTo(...p))
     rightPts.slice().reverse().forEach(p=>ctx.lineTo(...p))
     ctx.closePath(); ctx.clip()
 
-    // Steel bath gradient (hotter at top from lance, cooler bottom)
-    const bathGrd = ctx.createLinearGradient(0, BATH_SURFACE_Y-30, 0, VB)
-    const bc = sim.bathTemp
-    bathGrd.addColorStop(0, heatColor(bc, 1380, 1750))
-    bathGrd.addColorStop(0.3, heatColor(bc-30, 1380, 1750))
-    bathGrd.addColorStop(1, heatColor(bc-80, 1380, 1750))
-    ctx.fillStyle = bathGrd
-    ctx.fillRect(VCX-VW*1.2, BATH_SURFACE_Y, VW*2.4, VB-BATH_SURFACE_Y)
+    // Refractory
+    ctx.fillStyle='#1e1408'; ctx.fillRect(VCX-VW*1.2,VT,VW*2.4,VH)
+    const LINING=clamp(W*0.018,12,22)
+    ctx.fillStyle='#2c1a08'; ctx.fillRect(VCX-VW*1.1+LINING,VT,VW*2.2-LINING*2,VH)
 
-    // Bath surface shimmer
-    if (running && blowPct > 0) {
-      ctx.fillStyle = `rgba(255,220,60,${0.15+0.12*Math.sin(sim.t*6)})`
-      const shHW = vHW(0.5)*0.9
-      const surf_yf = clamp((BATH_SURFACE_Y-VT)/VH,0,1)
-      ctx.fillRect(VCX-vHW(surf_yf)*0.9, BATH_SURFACE_Y, vHW(surf_yf)*1.8, 4)
+    // Liquid steel bath
+    if(sim.bathLevel>0.04){
+      const bathGrd=ctx.createLinearGradient(0,BATH_Y-20,0,VB)
+      bathGrd.addColorStop(0, heatColor(sim.bathTemp,1380,1750))
+      bathGrd.addColorStop(0.3, heatColor(sim.bathTemp-25,1380,1750))
+      bathGrd.addColorStop(1, heatColor(sim.bathTemp-70,1380,1750))
+      ctx.fillStyle=bathGrd; ctx.fillRect(VCX-VW*1.2,BATH_Y,VW*2.4,VB-BATH_Y)
+      // Surface shimmer
+      if(stage==='BLOWING'&&running){
+        ctx.fillStyle=`rgba(255,215,55,${0.14+0.10*Math.sin(sim.t*6)})`
+        const shyf=clamp((BATH_Y-VT)/VH,0,1)
+        ctx.fillRect(VCX-vHW(shyf)*0.92,BATH_Y,vHW(shyf)*1.84,4)
+      }
     }
 
-    // ── SCRAP PIECES melting in bath ──────────────────────────────────────
-    sim.scrapPieces.forEach(sc => {
-      const sx = VCX + sc.x * vHW(0.6)
-      const sy = BATH_SURFACE_Y + (VB - BATH_SURFACE_Y) * sc.y
-      const sw = sc.w * VW, sh = sc.h * VH * 0.4
-      const mf = sc.meltFrac
-      // Solid part (dark metal)
-      ctx.fillStyle = `rgba(${Math.round(40+mf*80)},${Math.round(40+mf*60)},${Math.round(50+mf*40)},${0.85-mf*0.5})`
-      ctx.fillRect(sx-sw/2, sy-sh/2, sw*(1-mf*0.6), sh*(1-mf*0.4))
-      // Melting glow
-      if (mf > 0.2) {
-        const sg=ctx.createRadialGradient(sx,sy,1,sx,sy,sw*0.8)
-        sg.addColorStop(0,`rgba(255,${Math.round(80+mf*80)},0,${0.35*mf})`)
-        sg.addColorStop(1,'rgba(255,60,0,0)')
-        ctx.fillStyle=sg; ctx.fillRect(sx-sw,sy-sh,sw*2,sh*2)
+    // Scrap pieces inside vessel
+    sim.scrapPieces.forEach(sc=>{
+      const sx=VCX+sc.x*vHW(0.6), sy=BATH_Y+(VB-BATH_Y)*sc.y
+      const mf=sc.meltFrac
+      ctx.save(); ctx.translate(sx,sy); ctx.rotate(sc.angle||0)
+      ctx.fillStyle=`rgba(${Math.round(40+mf*100)},${Math.round(38+mf*80)},${Math.round(42+mf*60)},${0.9-mf*0.55})`
+      ctx.fillRect(-sc.w/2,-sc.h/2,sc.w*(1-mf*0.7),sc.h*(1-mf*0.5))
+      if(mf>0.15){
+        const sg2=ctx.createRadialGradient(0,0,1,0,0,sc.w*0.9)
+        sg2.addColorStop(0,`rgba(255,${Math.round(70+mf*80)},0,${0.32*mf})`); sg2.addColorStop(1,'rgba(255,60,0,0)')
+        ctx.fillStyle=sg2; ctx.fillRect(-sc.w,-sc.h,sc.w*2,sc.h*2)
       }
+      ctx.restore()
     })
 
-    // ── SLAG LAYER ────────────────────────────────────────────────────────
-    const slagHW_yf = clamp((SLAG_Y-VT)/VH, 0, 1)
-    const slagHW2   = vHW(slagHW_yf) * 0.92
-    if (sim.slagThickness > 2) {
-      const foam = sim.slagFoaming
-      // Slag body
-      const slg = ctx.createLinearGradient(0, SLAG_Y, 0, BATH_SURFACE_Y)
-      slg.addColorStop(0, `rgba(${Math.round(80+foam*40)},${Math.round(90+foam*20)},${Math.round(40+foam*15)},0.88)`)
-      slg.addColorStop(0.5, `rgba(${Math.round(110+foam*30)},${Math.round(95+foam*15)},45,0.82)`)
-      slg.addColorStop(1, `rgba(${Math.round(70+foam*20)},${Math.round(80+foam*10)},35,0.72)`)
-      ctx.fillStyle = slg
-      ctx.fillRect(VCX-slagHW2, SLAG_Y, slagHW2*2, BATH_SURFACE_Y-SLAG_Y)
-      // Foam surface lumps
-      if (foam > 0.2 && running) {
-        for(let lx=VCX-slagHW2+6; lx<VCX+slagHW2-6; lx+=14) {
-          const lump = 4+foam*8+3*Math.sin(sim.t*4+lx*0.3)
-          const lumpG=ctx.createRadialGradient(lx,SLAG_Y,0,lx,SLAG_Y,lump*1.5)
-          lumpG.addColorStop(0,`rgba(130,120,55,${0.5+foam*0.3})`); lumpG.addColorStop(1,'rgba(80,90,35,0)')
-          ctx.fillStyle=lumpG; ctx.beginPath(); ctx.arc(lx,SLAG_Y,lump*1.5,0,Math.PI*2); ctx.fill()
+    // Slag layer
+    if(sim.slagThick>2){
+      const slagHWyf=clamp((SLAG_Y-VT)/VH,0,1), slagHW2=vHW(slagHWyf)*0.9
+      const slg=ctx.createLinearGradient(0,SLAG_Y,0,BATH_Y)
+      slg.addColorStop(0,`rgba(${Math.round(75+sim.slagFoam*35)},${Math.round(88+sim.slagFoam*18)},38,0.88)`)
+      slg.addColorStop(1,'rgba(65,78,30,0.72)')
+      ctx.fillStyle=slg; ctx.fillRect(VCX-slagHW2,SLAG_Y,slagHW2*2,BATH_Y-SLAG_Y)
+      // Foam lumps
+      if(sim.slagFoam>0.18&&running){
+        for(let fx=VCX-slagHW2+6;fx<VCX+slagHW2-6;fx+=13){
+          const lump=3+sim.slagFoam*7+2.5*Math.sin(sim.t*4+fx*0.25)
+          const fg=ctx.createRadialGradient(fx,SLAG_Y,0,fx,SLAG_Y,lump*1.4)
+          fg.addColorStop(0,`rgba(120,115,48,${0.48+sim.slagFoam*0.28})`); fg.addColorStop(1,'rgba(75,88,28,0)')
+          ctx.fillStyle=fg; ctx.beginPath(); ctx.arc(fx,SLAG_Y,lump*1.4,0,Math.PI*2); ctx.fill()
         }
       }
-      // Slag glow
-      const slg2=ctx.createRadialGradient(VCX,SLAG_Y+10,2,VCX,SLAG_Y+10,slagHW2*0.8)
-      slg2.addColorStop(0,`rgba(255,${Math.round(120+foam*60)},0,${0.08+foam*0.08})`); slg2.addColorStop(1,'rgba(255,80,0,0)')
-      ctx.fillStyle=slg2; ctx.fillRect(VCX-slagHW2-20,SLAG_Y-20,slagHW2*2+40,60)
     }
 
-    // ── REACTION ZONES in bath ────────────────────────────────────────────
-    sim.reactionZones.forEach(rz => {
-      const col = rz.type==='co' ? `rgba(180,155,55,${rz.life*0.45})` : `rgba(255,${Math.round(80+rz.life*80)},0,${rz.life*0.35})`
+    // Reaction zones
+    sim.reactionZones.forEach(rz=>{
       const rg=ctx.createRadialGradient(rz.x,rz.y,0,rz.x,rz.y,rz.r*2)
-      rg.addColorStop(0,col); rg.addColorStop(1,'rgba(255,80,0,0)')
+      rg.addColorStop(0,`rgba(255,${Math.round(80+rz.life*80)},0,${rz.life*0.38})`); rg.addColorStop(1,'rgba(255,80,0,0)')
       ctx.fillStyle=rg; ctx.beginPath(); ctx.arc(rz.x,rz.y,rz.r*2,0,Math.PI*2); ctx.fill()
     })
 
-    // ── CO GAS RISING through bath ────────────────────────────────────────
-    sim.coGas.forEach(p=>{
-      ctx.globalAlpha=p.life*0.55; ctx.fillStyle=p.col
-      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
-      ctx.globalAlpha=p.life*0.18; ctx.fillStyle=p.col
-      ctx.beginPath(); ctx.arc(p.x-p.vx*0.6,p.y-p.vy*0.5,p.r*0.5,0,Math.PI*2); ctx.fill()
-    }); ctx.globalAlpha=1
+    // CO gas
+    sim.coGas.forEach(p=>{ctx.globalAlpha=p.life*0.54;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();ctx.globalAlpha=p.life*0.16;ctx.beginPath();ctx.arc(p.x-p.vx*0.55,p.y-p.vy*0.45,p.r*0.45,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
+
+    // Steam puffs
+    sim.steamPuffs.forEach(p=>{ctx.globalAlpha=p.life*0.20;ctx.fillStyle='rgba(200,215,230,1)';ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
+
+    // Slag splash
+    sim.slagSplash.forEach(p=>{ctx.globalAlpha=p.life*0.78;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
+
+    // Ferro alloy particles
+    sim.faParticles.forEach(p=>{ctx.globalAlpha=p.life*0.80;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
 
     ctx.restore()
 
-    // ── CO2 GAS upper vessel (post-combustion) ────────────────────────────
-    sim.co2Gas.forEach(p=>{
-      ctx.globalAlpha=p.life*0.48; ctx.fillStyle=p.col
-      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
-    }); ctx.globalAlpha=1
+    // CO2 upper vessel
+    sim.co2Gas.forEach(p=>{ctx.globalAlpha=p.life*0.46;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
 
-    // ── SLAG SPLASH particles ─────────────────────────────────────────────
-    sim.slagParticles.forEach(p=>{
-      ctx.globalAlpha=p.life*0.75; ctx.fillStyle=p.col
-      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
-    }); ctx.globalAlpha=1
+    // Sparks
+    sim.sparks.forEach(p=>{ctx.globalAlpha=p.life;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();ctx.globalAlpha=p.life*0.22;ctx.fillStyle='#FF8F00';ctx.beginPath();ctx.arc(p.x-p.vx*0.45,p.y-p.vy*0.45,p.r*0.35,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
 
-    // ── STEAM (early blow) ────────────────────────────────────────────────
-    sim.steamPuffs.forEach(p=>{
-      ctx.globalAlpha=p.life*0.22; ctx.fillStyle='rgba(200,215,230,1)'
-      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
-    }); ctx.globalAlpha=1
+    // Vessel border overlay
+    ctx.beginPath(); leftPts.forEach((p,i)=>i===0?ctx.moveTo(...p):ctx.lineTo(...p)); ctx.strokeStyle='#2c4055'; ctx.lineWidth=2; ctx.stroke()
+    ctx.beginPath(); rightPts.forEach((p,i)=>i===0?ctx.moveTo(...p):ctx.lineTo(...p)); ctx.stroke()
 
-    // ── SPARKS through mouth ──────────────────────────────────────────────
-    sim.sparks.forEach(p=>{
-      ctx.globalAlpha=p.life; ctx.fillStyle=p.col
-      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
-      ctx.globalAlpha=p.life*0.25; ctx.fillStyle='#FF8F00'
-      ctx.beginPath(); ctx.arc(p.x-p.vx*0.5,p.y-p.vy*0.5,p.r*0.4,0,Math.PI*2); ctx.fill()
-    }); ctx.globalAlpha=1
+    // ── O2 LANCE ──────────────────────────────────────────────────────────
+    const LANCE_X=VCX+W*0.01, LANCE_TOP=VT-H*0.12
+    const LANCE_DRAWN_BOT=stage==='BLOWING'?sim.lanceY:
+                          stage==='SUBLANCE'||stage==='FERRO_ALLOY'?VT-H*0.04:
+                          stage==='SLAG_OUT'||stage==='TAPPING'||stage==='COMPLETE'?LANCE_TOP:
+                          LANCE_TOP
+    const LW2=clamp(W*0.016,9,16)
 
-    // ── VESSEL SHELL BORDER (on top) ──────────────────────────────────────
-    ctx.beginPath(); ctx.moveTo(leftPts[0][0],leftPts[0][1])
-    leftPts.forEach(p=>ctx.lineTo(p[0],p[1]))
-    ctx.strokeStyle='#2c4055'; ctx.lineWidth=2; ctx.stroke()
-    ctx.beginPath(); ctx.moveTo(rightPts[0][0],rightPts[0][1])
-    rightPts.forEach(p=>ctx.lineTo(p[0],p[1]))
-    ctx.stroke()
-
-    // ── OXYGEN LANCE ─────────────────────────────────────────────────────
-    const LANCE_X    = VCX + W*0.008
-    const LANCE_TOP  = VT - H*0.08
-    const LANCE_BOT  = LANCE_TIP_Y
-    const LANCE_W    = clamp(W*0.018,10,18)
-
-    // Lance body (water-cooled tube)
-    const lanceGrd=ctx.createLinearGradient(LANCE_X-LANCE_W/2,0,LANCE_X+LANCE_W/2,0)
-    lanceGrd.addColorStop(0,'#1a3a4a'); lanceGrd.addColorStop(0.5,'#29B6F6'); lanceGrd.addColorStop(1,'#1a3a4a')
-    ctx.fillStyle=lanceGrd; ctx.fillRect(LANCE_X-LANCE_W/2,LANCE_TOP,LANCE_W,LANCE_BOT-LANCE_TOP)
-    ctx.strokeStyle='#0288D1'; ctx.lineWidth=0.8; ctx.strokeRect(LANCE_X-LANCE_W/2,LANCE_TOP,LANCE_W,LANCE_BOT-LANCE_TOP)
-    // Cooling water channels
-    for(let ly=LANCE_TOP+8;ly<LANCE_BOT-4;ly+=16){
-      ctx.fillStyle='rgba(41,182,246,0.12)'; ctx.fillRect(LANCE_X-LANCE_W/2,ly,LANCE_W,6)
-    }
-    // Lance tip (copper nozzle)
-    ctx.fillStyle='#FF8F00'; ctx.fillRect(LANCE_X-LANCE_W/2-2,LANCE_BOT-8,LANCE_W+4,10)
-    ctx.strokeStyle='#FFB300'; ctx.lineWidth=0.8; ctx.strokeRect(LANCE_X-LANCE_W/2-2,LANCE_BOT-8,LANCE_W+4,10)
-
-    // O2 JET from lance tip (4 convergent jets)
-    if (running && blowPct > 0) {
-      ;[-0.35,-0.12,0.12,0.35].forEach((angle,ki) => {
-        const jvx=Math.sin(angle)*14, jvy=18
-        const jx2=LANCE_X+Math.sin(angle)*6, jy=LANCE_BOT
-        const jetG=ctx.createLinearGradient(jx2,jy,jx2+jvx*1.5,jy+jvy*1.5)
-        jetG.addColorStop(0,`rgba(100,180,255,${0.8*sim.lanceFlame})`)
-        jetG.addColorStop(0.5,`rgba(150,210,255,${0.5*sim.lanceFlame})`)
-        jetG.addColorStop(1,'rgba(100,180,255,0)')
-        ctx.strokeStyle=jetG; ctx.lineWidth=2.5
-        ctx.beginPath(); ctx.moveTo(jx2,jy); ctx.lineTo(jx2+jvx*1.5,jy+jvy*1.5); ctx.stroke()
+    if(stage==='BLOWING'||stage==='SUBLANCE'){
+      // Lance body
+      const lGrd=ctx.createLinearGradient(LANCE_X-LW2/2,0,LANCE_X+LW2/2,0)
+      lGrd.addColorStop(0,'#1a3a4a'); lGrd.addColorStop(0.5,'#29B6F6'); lGrd.addColorStop(1,'#1a3a4a')
+      ctx.fillStyle=lGrd; ctx.fillRect(LANCE_X-LW2/2,LANCE_TOP,LW2,LANCE_DRAWN_BOT-LANCE_TOP)
+      ctx.strokeStyle='#0288D1'; ctx.lineWidth=0.8; ctx.strokeRect(LANCE_X-LW2/2,LANCE_TOP,LW2,LANCE_DRAWN_BOT-LANCE_TOP)
+      for(let ly=LANCE_TOP+8;ly<LANCE_DRAWN_BOT-4;ly+=16){ctx.fillStyle='rgba(41,182,246,0.10)';ctx.fillRect(LANCE_X-LW2/2,ly,LW2,5)}
+      // Copper tip
+      ctx.fillStyle='#FF8F00'; ctx.fillRect(LANCE_X-LW2/2-2,LANCE_DRAWN_BOT-8,LW2+4,10)
+      // O2 jets
+      if(stage==='BLOWING'&&running){
+        ;[-0.32,-0.10,0.10,0.32].forEach(a=>{
+          const jx=LANCE_X+Math.sin(a)*6, jy=LANCE_DRAWN_BOT
+          const jg=ctx.createLinearGradient(jx,jy,jx+Math.sin(a)*18,jy+22)
+          jg.addColorStop(0,`rgba(100,180,255,${0.82*sim.lanceFlame||0.7})`); jg.addColorStop(1,'rgba(100,180,255,0)')
+          ctx.strokeStyle=jg; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo(jx,jy); ctx.lineTo(jx+Math.sin(a)*18,jy+22); ctx.stroke()
+        })
         // Impact glow
-        const ig=ctx.createRadialGradient(LANCE_X,LANCE_TIP_Y+30,2,LANCE_X,LANCE_TIP_Y+30,28*sim.lanceFlame)
-        ig.addColorStop(0,`rgba(255,230,100,${0.55*sim.lanceFlame})`)
-        ig.addColorStop(0.5,`rgba(255,120,0,${0.3*sim.lanceFlame})`)
-        ig.addColorStop(1,'rgba(255,60,0,0)')
-        ctx.fillStyle=ig; ctx.fillRect(LANCE_X-40,LANCE_TIP_Y,80,60)
-      })
+        const ig=ctx.createRadialGradient(LANCE_X,LANCE_DRAWN_BOT+22,2,LANCE_X,LANCE_DRAWN_BOT+22,30)
+        ig.addColorStop(0,'rgba(255,230,80,0.55)'); ig.addColorStop(1,'rgba(255,80,0,0)')
+        ctx.fillStyle=ig; ctx.fillRect(LANCE_X-40,LANCE_DRAWN_BOT,80,55)
+      }
+      // Lance labels
+      lblB('O₂ LANCE',LANCE_X+LW2/2+8,LANCE_TOP+18,'#0288D1',clamp(W*0.009,7,9),'left')
+      lbl(`H: ${lanceHeight}mm`,LANCE_X+LW2/2+8,LANCE_TOP+29,'#29B6F6',clamp(W*0.009,7,9),'left')
+      lbl(`${o2Flow} Nm³/m`,LANCE_X+LW2/2+8,LANCE_TOP+39,'#81D4FA',clamp(W*0.009,7,9),'left')
+      // Lance height arrow
+      ctx.strokeStyle='rgba(0,188,212,0.28)'; ctx.lineWidth=1; ctx.setLineDash([3,4])
+      ctx.beginPath(); ctx.moveTo(LANCE_X-LW2/2-14,LANCE_DRAWN_BOT); ctx.lineTo(LANCE_X-LW2/2-14,BATH_Y); ctx.stroke()
+      ctx.setLineDash([])
+      lbl(`${lanceHeight}mm`,LANCE_X-LW2/2-18,LANCE_DRAWN_BOT+(BATH_Y-LANCE_DRAWN_BOT)/2,'rgba(0,188,212,0.45)',clamp(W*0.009,7,9),'right')
     }
 
     // O2 jet particles
-    sim.o2Jets.forEach(p=>{
-      ctx.globalAlpha=p.life*0.7; ctx.fillStyle=p.col
-      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
-    }); ctx.globalAlpha=1
+    sim.o2Jets.forEach(p=>{ctx.globalAlpha=p.life*0.7;ctx.fillStyle='rgba(100,180,255,0.75)';ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
 
-    // Lance label
-    lblB('O₂ LANCE',LANCE_X+LANCE_W/2+8,LANCE_TOP+20,'#0288D1',clamp(W*0.010,8,10),'left')
-    lbl(`H:${lanceHeight}mm`,LANCE_X+LANCE_W/2+8,LANCE_TOP+32,running?'#29B6F6':'#37474F',clamp(W*0.009,7,9),'left')
-    lbl(`${o2Flow} Nm³/m`,LANCE_X+LANCE_W/2+8,LANCE_TOP+42,running?'#81D4FA':'#37474F',clamp(W*0.009,7,9),'left')
-
-    // ── OFF-GAS HOOD & COLLECTION ────────────────────────────────────────
-    const HOOD_Y = VT - H*0.05
-    ctx.fillStyle='#1a2535'; ctx.strokeStyle='#2c4055'; ctx.lineWidth=1.5
-    // Hood funnel shape
-    ctx.beginPath()
-    ctx.moveTo(VCX-vHW(0)*0.8,HOOD_Y+H*0.04)
-    ctx.lineTo(VCX-W*0.055,HOOD_Y)
-    ctx.lineTo(VCX-W*0.045,HOOD_Y-H*0.05)
-    ctx.lineTo(VCX+W*0.045,HOOD_Y-H*0.05)
-    ctx.lineTo(VCX+W*0.055,HOOD_Y)
-    ctx.lineTo(VCX+vHW(0)*0.8,HOOD_Y+H*0.04)
-    ctx.closePath(); ctx.fill(); ctx.stroke()
-    // Off-gas duct
-    ctx.strokeStyle=running?`rgba(${130+Math.round(30*Math.sin(sim.t*2))},120,60,0.7)`:'#1a2535'; ctx.lineWidth=12
-    ctx.beginPath(); ctx.moveTo(VCX+W*0.045,HOOD_Y-H*0.05); ctx.bezierCurveTo(VCX+W*0.10,HOOD_Y-H*0.07,W*0.80,HOOD_Y-H*0.06,W*0.85,H*0.08); ctx.stroke()
-    lbl('OFF-GAS',W*0.83,H*0.06,running?'#9B8040':'#2c4055',clamp(W*0.009,7,9),'left')
-    lbl('→ GCP/OG SYSTEM',W*0.83,H*0.075,'#37474F',clamp(W*0.008,6,8),'left')
-    lbl(`CO:${sim.frame%60<30?Math.round(65+sim.offGasFlow*15):'--'}% CO₂:${sim.frame%60<30?Math.round(14+sim.offGasFlow*5):'--'}%`,W*0.83,H*0.088,running?'#8BC34A':'#2c4055',clamp(W*0.008,6,8),'left')
-
-    // Off-gas particles
-    sim.offGasParticles.forEach(p=>{
-      ctx.globalAlpha=p.life*0.42; ctx.fillStyle=p.col
-      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
-    }); ctx.globalAlpha=1
-
-    // ── HOT METAL LADLE (left side) ──────────────────────────────────────
-    const HL_X=W*0.08, HL_Y=H*0.25, HL_W=W*0.10, HL_H=H*0.22
-    ctx.fillStyle='#263340'; ctx.strokeStyle='#37474F'; ctx.lineWidth=1.5
-    ctx.beginPath(); ctx.moveTo(HL_X,HL_Y); ctx.lineTo(HL_X+HL_W,HL_Y); ctx.lineTo(HL_X+HL_W-6,HL_Y+HL_H); ctx.lineTo(HL_X+6,HL_Y+HL_H); ctx.closePath(); ctx.fill(); ctx.stroke()
-    // Steel in ladle
-    const lg2=ctx.createLinearGradient(0,HL_Y+HL_H*0.1,0,HL_Y+HL_H)
-    lg2.addColorStop(0,'rgba(255,110,0,0.9)'); lg2.addColorStop(1,'rgba(190,45,0,0.75)')
-    ctx.fillStyle=lg2
-    ctx.beginPath(); ctx.moveTo(HL_X+8,HL_Y+HL_H*0.1); ctx.lineTo(HL_X+HL_W-8,HL_Y+HL_H*0.1); ctx.lineTo(HL_X+HL_W-12,HL_Y+HL_H-2); ctx.lineTo(HL_X+12,HL_Y+HL_H-2); ctx.closePath(); ctx.fill()
-    // Ladle crane hook
-    ctx.fillStyle='#1a2535'; ctx.fillRect(HL_X+HL_W/2-3,HL_Y-H*0.06,6,H*0.06)
-    lblB('HOT METAL',HL_X+HL_W/2,HL_Y-H*0.07,'#FF8F00',clamp(W*0.010,8,10))
-    lbl(`${hmWeight}t  ${hmTemp}°C`,HL_X+HL_W/2,HL_Y+HL_H*0.38,'#FF7043',clamp(W*0.009,7,9))
-    lbl(`C:${hmC}% Si:${hmSi}%`,HL_X+HL_W/2,HL_Y+HL_H*0.55,'rgba(200,180,160,0.7)',clamp(W*0.009,7,8))
-    lbl(`Mn:${hmMn}% P:${hmP}%`,HL_X+HL_W/2,HL_Y+HL_H*0.70,'rgba(200,180,160,0.7)',clamp(W*0.009,7,8))
-
-    // Pour stream from ladle to vessel
-    if (blowPct === 0 && !running) {
-      ctx.strokeStyle='rgba(255,100,0,0.4)'; ctx.lineWidth=6; ctx.setLineDash([6,4])
-      ctx.beginPath(); ctx.moveTo(HL_X+HL_W,HL_Y+HL_H*0.5); ctx.bezierCurveTo(HL_X+HL_W+30,HL_Y+HL_H*0.5,VCX-vHW(0.05)-10,VT+VH*0.05,VCX-vHW(0.1),VT+VH*0.10); ctx.stroke()
-      ctx.setLineDash([])
-    }
-
-    // ── SUB-LANCE ────────────────────────────────────────────────────────
-    if (sim.subLanceDeploy) {
-      const SLX=VCX-LANCE_W*1.8, SLY0=VT-H*0.04, SLY1=SLY0+sim.subLanceY
+    // ── SUB-LANCE ──────────────────────────────────────────────────────────
+    if(stage==='SUBLANCE'){
+      const SLX=VCX-LW2*2, SLY0=VT-H*0.04, SLY1=SLY0+sim.subLanceY
       ctx.fillStyle='#2c3e50'; ctx.strokeStyle='#546E7A'; ctx.lineWidth=0.8
       ctx.fillRect(SLX-3,SLY0,6,SLY1-SLY0); ctx.strokeRect(SLX-3,SLY0,6,SLY1-SLY0)
-      // Thermocouple tip
-      ctx.fillStyle='#FFB300'; ctx.beginPath(); ctx.arc(SLX,SLY1,5,0,Math.PI*2); ctx.fill()
-      lblB('SUB-LANCE',SLX-8,SLY0-6,'#57ab5a',clamp(W*0.009,7,9),'right')
-      if (sim.measuredTemp) {
-        lbl(`T=${sim.measuredTemp}°C`,SLX-8,SLY0+4,'#57ab5a',clamp(W*0.009,7,9),'right')
-        lbl(`[C]=${sim.measuredC}%`,SLX-8,SLY0+14,'#57ab5a',clamp(W*0.009,7,9),'right')
+      ctx.fillStyle='#57ab5a'; ctx.beginPath(); ctx.arc(SLX,SLY1,5,0,Math.PI*2); ctx.fill()
+      lblB('SUB-LANCE',SLX,SLY0-6,'#57ab5a',clamp(W*0.009,7,9))
+      if(sim.measuredT){
+        lbl(`T:${sim.measuredT}°C`,SLX,SLY0+4,'#57ab5a',clamp(W*0.009,7,9))
+        lbl(`[C]:${sim.measuredC}%`,SLX,SLY0+14,'#57ab5a',clamp(W*0.009,7,9))
       }
     }
 
-    // ── ZONE ANNOTATIONS inside vessel ───────────────────────────────────
-    if (blowPct > 0) {
-      // Impact zone annotation
-      const impY = LANCE_TIP_Y + 20
-      ctx.strokeStyle='rgba(100,180,255,0.22)'; ctx.lineWidth=1; ctx.setLineDash([2,4])
-      ctx.beginPath(); ctx.ellipse(VCX,impY,vHW(0.28)*0.35,20,0,0,Math.PI*2); ctx.stroke()
-      ctx.setLineDash([])
-      lbl('IMPACT ZONE',VCX+vHW(0.28)*0.38,impY+4,'rgba(100,180,255,0.40)',clamp(W*0.009,7,9),'left')
+    // ── OFF-GAS HOOD ──────────────────────────────────────────────────────
+    if(stage==='BLOWING'){
+      const HOOD_Y=VT-H*0.05
+      ctx.fillStyle='#1a2535'; ctx.strokeStyle='#2c4055'; ctx.lineWidth=1.5
+      ctx.beginPath()
+      ctx.moveTo(VCX-vHW(0)*0.78,HOOD_Y+H*0.04)
+      ctx.lineTo(VCX-W*0.05,HOOD_Y); ctx.lineTo(VCX-W*0.04,HOOD_Y-H*0.04)
+      ctx.lineTo(VCX+W*0.04,HOOD_Y-H*0.04); ctx.lineTo(VCX+W*0.05,HOOD_Y)
+      ctx.lineTo(VCX+vHW(0)*0.78,HOOD_Y+H*0.04); ctx.closePath(); ctx.fill(); ctx.stroke()
+      ctx.strokeStyle=running?`rgba(${130+Math.round(28*Math.sin(sim.t*2))},120,55,0.68)`:'#1a2535'; ctx.lineWidth=10
+      ctx.beginPath(); ctx.moveTo(VCX+W*0.04,HOOD_Y-H*0.04); ctx.bezierCurveTo(VCX+W*0.09,HOOD_Y-H*0.06,W*0.78,HOOD_Y-H*0.05,W*0.82,H*0.06); ctx.stroke()
+      lbl('OFF-GAS',W*0.80,H*0.04,'#9B8040',clamp(W*0.009,7,9))
+      // Off-gas particles
+      sim.offGasParticles.forEach(p=>{ctx.globalAlpha=p.life*0.40;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
+    }
 
-      // Decarburization zone
-      if (sim.bathC < hmC * 0.7) {
-        ctx.strokeStyle='rgba(165,210,80,0.20)'; ctx.lineWidth=1; ctx.setLineDash([3,4])
-        ctx.beginPath(); ctx.ellipse(VCX,BATH_SURFACE_Y-VH*0.08,vHW(0.45)*0.7,VH*0.10,0,0,Math.PI*2); ctx.stroke()
-        ctx.setLineDash([])
-        lbl('DECARB ZONE',VCX-vHW(0.45)*0.75,BATH_SURFACE_Y-VH*0.08,'rgba(165,210,80,0.30)',clamp(W*0.009,7,8),'right')
+    // ── TAPHOLE & STEEL TAPPING ────────────────────────────────────────────
+    if(stage==='TAPPING'){
+      // Steel runner
+      ctx.strokeStyle='#37474F'; ctx.lineWidth=8
+      ctx.beginPath(); ctx.moveTo(TAPHOLE_X,TAPHOLE_Y); ctx.lineTo(TAPHOLE_X+W*0.12,TAPHOLE_Y+H*0.06); ctx.stroke()
+      const tsg=ctx.createLinearGradient(TAPHOLE_X,TAPHOLE_Y,TAPHOLE_X+W*0.12,TAPHOLE_Y+H*0.06)
+      tsg.addColorStop(0,`rgba(255,${80+Math.round(35*Math.sin(sim.t*6))},0,0.92)`)
+      tsg.addColorStop(1,'rgba(210,40,0,0.68)')
+      ctx.strokeStyle=tsg; ctx.lineWidth=5
+      ctx.beginPath(); ctx.moveTo(TAPHOLE_X,TAPHOLE_Y); ctx.lineTo(TAPHOLE_X+W*0.12,TAPHOLE_Y+H*0.06); ctx.stroke()
+      const tgw=ctx.createRadialGradient(TAPHOLE_X,TAPHOLE_Y,2,TAPHOLE_X,TAPHOLE_Y,20)
+      tgw.addColorStop(0,'rgba(255,120,0,0.6)'); tgw.addColorStop(1,'rgba(255,80,0,0)')
+      ctx.fillStyle=tgw; ctx.fillRect(TAPHOLE_X-22,TAPHOLE_Y-22,44,44)
+      lblB('TAPPING',TAPHOLE_X-6,TAPHOLE_Y-12,'#FFD54F',clamp(W*0.009,7,9),'right')
+
+      // Steel ladle below taphole
+      const SLX2=TAPHOLE_X+W*0.10, SLY2=TAPHOLE_Y+H*0.08
+      const SLW=W*0.12, SLH=H*0.14
+      ctx.fillStyle='#1e2d3d'; ctx.strokeStyle='#2c4055'; ctx.lineWidth=1.5
+      ctx.beginPath(); ctx.moveTo(SLX2-SLW/2,SLY2); ctx.lineTo(SLX2+SLW/2,SLY2); ctx.lineTo(SLX2+SLW/2-8,SLY2+SLH); ctx.lineTo(SLX2-SLW/2+8,SLY2+SLH); ctx.closePath(); ctx.fill(); ctx.stroke()
+      if(sim.steelLadleFill>0.02){
+        const sf=sim.steelLadleFill
+        const sly2=SLY2+SLH*(1-sf*0.88)
+        const slg2=ctx.createLinearGradient(0,sly2,0,SLY2+SLH)
+        slg2.addColorStop(0,heatColor(sim.tapTemp||1650,1400,1720)); slg2.addColorStop(1,'rgba(190,40,0,0.78)')
+        ctx.fillStyle=slg2
+        ctx.beginPath(); ctx.moveTo(SLX2-SLW/2+sf*4,sly2); ctx.lineTo(SLX2+SLW/2-sf*4,sly2); ctx.lineTo(SLX2+SLW/2-8,SLY2+SLH); ctx.lineTo(SLX2-SLW/2+8,SLY2+SLH); ctx.closePath(); ctx.fill()
+        ctx.fillStyle=`rgba(255,200,50,${0.22+0.14*Math.sin(sim.t*4)})`; ctx.fillRect(SLX2-SLW/2+sf*4,sly2,SLW-sf*8,3)
       }
-
-      // Slag-metal interface
-      ctx.strokeStyle='rgba(200,180,60,0.25)'; ctx.lineWidth=1; ctx.setLineDash([4,4])
-      ctx.beginPath(); ctx.moveTo(VCX-slagHW2*0.9,BATH_SURFACE_Y); ctx.lineTo(VCX+slagHW2*0.9,BATH_SURFACE_Y); ctx.stroke()
-      ctx.setLineDash([])
-      lbl('SLAG-METAL INTERFACE',VCX+slagHW2*0.95,BATH_SURFACE_Y+4,'rgba(200,180,60,0.30)',clamp(W*0.009,7,8),'left')
+      // Ladle walls
+      ctx.strokeStyle='#2c4055'; ctx.lineWidth=1.5
+      ctx.beginPath(); ctx.moveTo(SLX2-SLW/2,SLY2); ctx.lineTo(SLX2-SLW/2+8,SLY2+SLH); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(SLX2+SLW/2,SLY2); ctx.lineTo(SLX2+SLW/2-8,SLY2+SLH); ctx.stroke()
+      lblB('STEEL LADLE',SLX2,SLY2-6,'#FF8F00',clamp(W*0.010,8,10))
+      lbl(`${(sim.steelLadleFill*hmWeight).toFixed(1)}t`,SLX2,SLY2+SLH+14,sim.steelLadleFill>0?'#FF7043':'#546E7A',clamp(W*0.009,7,9))
+      if(sim.tapTemp) lbl(`${sim.tapTemp}°C`,SLX2,SLY2+SLH+24,heatColor(sim.tapTemp,1400,1720),clamp(W*0.009,7,9))
     }
 
-    // ── GAS LABELS ────────────────────────────────────────────────────────
-    if (running && blowPct > 0) {
-      lbl('CO↑',VCX+vHW(0.5)*0.5,BATH_SURFACE_Y-VH*0.25,'rgba(180,155,50,0.55)',clamp(W*0.010,8,10))
-      lbl('CO→CO₂',VCX+vHW(0.3)*0.4,VT+VH*0.18,'rgba(120,155,70,0.48)',clamp(W*0.009,7,9))
-      if (blowPct < 15) lbl('H₂O↑',VCX-vHW(0.5)*0.4,BATH_SURFACE_Y-VH*0.18,'rgba(180,210,230,0.42)',clamp(W*0.009,7,9))
+    // ── SLAGHOLE & SLAG POT ────────────────────────────────────────────────
+    if(stage==='SLAG_OUT'){
+      ctx.strokeStyle='#37474F'; ctx.lineWidth=6
+      ctx.beginPath(); ctx.moveTo(SLAGHOLE_X,SLAGHOLE_Y); ctx.lineTo(SLAGHOLE_X-W*0.10,SLAGHOLE_Y+H*0.05); ctx.stroke()
+      const slStream=ctx.createLinearGradient(SLAGHOLE_X,SLAGHOLE_Y,SLAGHOLE_X-W*0.10,SLAGHOLE_Y+H*0.05)
+      slStream.addColorStop(0,'rgba(110,128,45,0.92)'); slStream.addColorStop(1,'rgba(85,100,32,0.62)')
+      ctx.strokeStyle=slStream; ctx.lineWidth=5
+      ctx.beginPath(); ctx.moveTo(SLAGHOLE_X,SLAGHOLE_Y); ctx.lineTo(SLAGHOLE_X-W*0.10,SLAGHOLE_Y+H*0.05); ctx.stroke()
+      lblB('SLAG RUNNING',SLAGHOLE_X+8,SLAGHOLE_Y-8,'#A5D6A7',clamp(W*0.009,7,9),'left')
+      // Slag pot
+      const SPX=SLAGHOLE_X-W*0.12, SPY=SLAGHOLE_Y+H*0.06
+      const SPW=W*0.10, SPH=H*0.12
+      ctx.fillStyle='#1a2535'; ctx.strokeStyle='#2c4055'; ctx.lineWidth=1.5
+      ctx.beginPath(); ctx.moveTo(SPX-SPW/2,SPY); ctx.lineTo(SPX+SPW/2,SPY); ctx.lineTo(SPX+SPW/2-6,SPY+SPH); ctx.lineTo(SPX-SPW/2+6,SPY+SPH); ctx.closePath(); ctx.fill(); ctx.stroke()
+      if(sim.slagPotFill>0.02){
+        const spf=sim.slagPotFill
+        const spy2=SPY+SPH*(1-spf*0.88)
+        const spg=ctx.createLinearGradient(0,spy2,0,SPY+SPH)
+        spg.addColorStop(0,'rgba(110,125,42,0.92)'); spg.addColorStop(1,'rgba(80,95,28,0.75)')
+        ctx.fillStyle=spg
+        ctx.beginPath(); ctx.moveTo(SPX-SPW/2+spf*4,spy2); ctx.lineTo(SPX+SPW/2-spf*4,spy2); ctx.lineTo(SPX+SPW/2-6,SPY+SPH); ctx.lineTo(SPX-SPW/2+6,SPY+SPH); ctx.closePath(); ctx.fill()
+      }
+      ctx.strokeStyle='#2c4055'; ctx.lineWidth=1.5
+      ctx.beginPath(); ctx.moveTo(SPX-SPW/2,SPY); ctx.lineTo(SPX-SPW/2+6,SPY+SPH); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(SPX+SPW/2,SPY); ctx.lineTo(SPX+SPW/2-6,SPY+SPH); ctx.stroke()
+      lblB('SLAG POT',SPX,SPY-6,'#A5D6A7',clamp(W*0.010,8,10))
+      lbl(`${(sim.slagPotFill*12).toFixed(1)}t`,SPX,SPY+SPH+14,'#8BC34A',clamp(W*0.009,7,9))
     }
 
-    // ── BLOW PROGRESS BAR ────────────────────────────────────────────────
-    const BP_X=W*0.68,BP_Y=H*0.06,BP_W=W*0.27,BP_H=12
-    ctx.fillStyle='#0d1520'; ctx.fillRect(BP_X,BP_Y,BP_W,BP_H)
-    const bpCol = blowPct>90?'#f85149':blowPct>70?'#FF8F00':blowPct>40?'#FFB300':'#1565C0'
-    ctx.fillStyle=bpCol; ctx.fillRect(BP_X,BP_Y,BP_W*(blowPct/100),BP_H)
-    ctx.strokeStyle='#1e3040'; ctx.lineWidth=0.8; ctx.strokeRect(BP_X,BP_Y,BP_W,BP_H)
-    lblB(`BLOW ${blowPct.toFixed(1)}%`,BP_X+BP_W/2,BP_Y-4,bpCol,clamp(W*0.010,8,11))
+    // ── FERRO ALLOY HOPPERS ────────────────────────────────────────────────
+    if(stage==='FERRO_ALLOY'){
+      const FA_HX=[VCX+W*0.18,VCX+W*0.25,VCX+W*0.32]
+      FA_HX.forEach((hx2,hi)=>{
+        const names=['FeSi','FeMn','FeNb']
+        const HY3=H*0.08, HW3=W*0.045, HH3=H*0.09
+        ctx.fillStyle='#1a2535'; ctx.strokeStyle='#2c4055'; ctx.lineWidth=1
+        ctx.beginPath(); ctx.moveTo(hx2-HW3/2,HY3); ctx.lineTo(hx2+HW3/2,HY3); ctx.lineTo(hx2+HW3/2-4,HY3+HH3); ctx.lineTo(hx2-HW3/2+4,HY3+HH3); ctx.closePath(); ctx.fill(); ctx.stroke()
+        ctx.fillStyle='rgba(190,150,60,0.65)'; ctx.fillRect(hx2-HW3/2+4,HY3+8,HW3-8,HH3-16)
+        lblB(names[hi],hx2,HY3-4,'#FFB300',clamp(W*0.009,7,9))
+        ctx.fillStyle='#0d1520'; ctx.fillRect(hx2-3,HY3+HH3,6,H*0.03)
+        if(sim.faFalling){
+          const fgrd=ctx.createLinearGradient(hx2,HY3+HH3,VCX,VT)
+          fgrd.addColorStop(0,'rgba(190,150,60,0.65)'); fgrd.addColorStop(1,'rgba(190,150,60,0.15)')
+          ctx.strokeStyle=fgrd; ctx.lineWidth=3.5
+          ctx.beginPath(); ctx.moveTo(hx2,HY3+HH3); ctx.lineTo(VCX+(hx2-VCX)*0.2,VT); ctx.stroke()
+        }
+      })
+      lbl('FERRO ALLOY ADDITION',VCX+W*0.25,H*0.05,'#FFB300',clamp(W*0.010,8,10))
+      sim.faParticles.forEach(p=>{ctx.globalAlpha=p.life*0.82;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
+    }
 
-    // ── HUD ──────────────────────────────────────────────────────────────
-    const HX=W*0.68,HY=H*0.10,HW=W*0.27,RH=26
+    // ── PROCESS STAGE DISPLAY ─────────────────────────────────────────────
+    const stageNames={
+      SCRAP_CHARGE:'SCRAP CHARGING',FLUX_CHARGE:'FLUX ADDITION',HM_CHARGE:'HOT METAL CHARGING',
+      BLOWING:'O₂ BLOWING',SUBLANCE:'SUB-LANCE MEASUREMENT',FERRO_ALLOY:'FERRO ALLOY ADDITION',
+      SLAG_OUT:'SLAG TAPPING',TAPPING:'STEEL TAPPING',COMPLETE:'HEAT COMPLETE ✓'
+    }
+    const stageColors={
+      SCRAP_CHARGE:'#78909C',FLUX_CHARGE:'#A5D6A7',HM_CHARGE:'#FF7043',
+      BLOWING:'#FF8F00',SUBLANCE:'#57ab5a',FERRO_ALLOY:'#FFB300',
+      SLAG_OUT:'#8BC34A',TAPPING:'#FF6D00',COMPLETE:'#39c5cf'
+    }
+    ctx.fillStyle='rgba(4,8,18,0.82)'; ctx.fillRect(0,0,W,H*0.028)
+    const stageCol=stageColors[stage]||'#546E7A'
+    ctx.fillStyle=stageCol; ctx.font=`bold ${clamp(W*0.013,10,14)}px monospace`; ctx.textAlign='center'
+    ctx.fillText(stageNames[stage]||stage, W*0.44, H*0.020)
+    // Stage indicator dots
+    STAGES.forEach((s,si)=>{
+      const stX=W*0.01+si*W*0.095
+      ctx.fillStyle=s===stage?stageColors[s]||'#FF8F00':STAGES.indexOf(stage)>si?'#263340':'#1a2535'
+      ctx.beginPath(); ctx.arc(stX,H*0.014,5,0,Math.PI*2); ctx.fill()
+      if(s===stage){ctx.strokeStyle=stageColors[s];ctx.lineWidth=1.5;ctx.stroke()}
+    })
+
+    // ── GAS LABELS ──────────────────────────────────────────────────────────
+    if(stage==='BLOWING'&&running&&blowPct>5){
+      lbl('CO↑',VCX+vHW(0.5)*0.55,BATH_Y-VH*0.22,'rgba(175,148,45,0.55)',clamp(W*0.010,8,10))
+      lbl('CO→CO₂',VCX+vHW(0.3)*0.45,VT+VH*0.17,'rgba(115,148,58,0.48)',clamp(W*0.009,7,9))
+    }
+
+    // ── BLOW PROGRESS (only during BLOWING) ───────────────────────────────
+    if(stage==='BLOWING'){
+      const BP_X=W*0.68,BP_Y=H*0.06,BP_W=W*0.27,BP_H=12
+      ctx.fillStyle='#0d1520'; ctx.fillRect(BP_X,BP_Y,BP_W,BP_H)
+      const bpC=blowPct>90?'#f85149':blowPct>70?'#FF8F00':'#1565C0'
+      ctx.fillStyle=bpC; ctx.fillRect(BP_X,BP_Y,BP_W*(blowPct/100),BP_H)
+      ctx.strokeStyle='#1e3040'; ctx.lineWidth=0.8; ctx.strokeRect(BP_X,BP_Y,BP_W,BP_H)
+      lblB(`BLOW ${blowPct.toFixed(1)}%`,BP_X+BP_W/2,BP_Y-4,bpC,clamp(W*0.010,8,11))
+    }
+
+    // ── HUD ───────────────────────────────────────────────────────────────
+    const HX=W*0.68,HY=H*0.10,HW=W*0.27,RH=24
     ctx.fillStyle='rgba(4,8,18,0.86)'; ctx.fillRect(HX-4,HY,HW+8,RH*14+12)
     ctx.strokeStyle='#1a3050'; ctx.lineWidth=0.8; ctx.strokeRect(HX-4,HY,HW+8,RH*14+12)
-    lblB('BOF PROCESS MONITOR',HX+HW/2,HY+14,'#3d6a8a',clamp(W*0.010,8,11))
+    lblB('HEAT MONITOR',HX+HW/2,HY+14,'#3d6a8a',clamp(W*0.010,8,10))
     const hudRows=[
-      ['BATH TEMP',     `${Math.round(sim.bathTemp)} °C`,   heatColor(sim.bathTemp,1400,1700)],
-      ['TARGET TEMP',   `${targetTemp} °C`,                 '#546E7A'],
-      ['BATH [C]%',     `${sim.bathC.toFixed(3)} %`,        '#29B6F6'],
-      ['TARGET [C]%',   `${targetC} %`,                     '#546E7A'],
-      ['BATH [Si]%',    `${sim.bathSi.toFixed(3)} %`,       '#FFB300'],
-      ['BATH [Mn]%',    `${sim.bathMn.toFixed(3)} %`,       '#9b5de5'],
-      ['O₂ FLOW',       `${o2Flow} Nm³/m`,                  '#29B6F6'],
-      ['LANCE HEIGHT',  `${lanceHeight} mm`,                '#78909C'],
-      ['SLAG THICK',    `${Math.round(sim.slagThickness)} mm`, '#8BC34A'],
-      ['SLAG FOAM',     `${(sim.slagFoaming*100).toFixed(0)} %`, '#7C9060'],
-      ['OFF-GAS CO',    running?`${Math.round(65+sim.offGasFlow*15)} %`:'--', '#8BC34A'],
-      ['O₂ CONSUMED',   `${Math.round(blowPct*hmWeight*hmC/100*1.333/100)} Nm³`, '#4FC3F7'],
-      ['SUB-LANCE',     sim.subLanceDeploy?`${sim.measuredTemp}°C`:'STANDBY', sim.subLanceDeploy?'#57ab5a':'#37474F'],
-      ['STATUS',        running?`BLOWING ${blowPct.toFixed(0)}%`:'STANDBY', running?'#57ab5a':'#546E7A'],
+      ['STAGE',         stageNames[stage]||stage,                    stageCol],
+      ['BATH TEMP',     `${Math.round(sim.bathTemp)} °C`,            heatColor(sim.bathTemp,1380,1720)],
+      ['TARGET TEMP',   `${targetTemp} °C`,                          '#546E7A'],
+      ['BATH [C]%',     `${sim.bathC.toFixed(3)} %`,                 '#29B6F6'],
+      ['TARGET [C]%',   `${targetC} %`,                              '#546E7A'],
+      ['BATH [Si]%',    `${sim.bathSi.toFixed(4)} %`,                '#FFB300'],
+      ['BATH [Mn]%',    `${sim.bathMn.toFixed(4)} %`,                '#9b5de5'],
+      ['O₂ FLOW',       stage==='BLOWING'?`${o2Flow} Nm³/m`:'--',   '#29B6F6'],
+      ['LANCE HT',      stage==='BLOWING'?`${lanceHeight} mm`:'--', '#78909C'],
+      ['SLAG THICK',    `${Math.round(sim.slagThick)} mm`,           '#8BC34A'],
+      ['BATH LEVEL',    `${(sim.bathLevel*100).toFixed(0)} %`,       '#FF8F00'],
+      ['BLOW%',         stage==='BLOWING'?`${blowPct.toFixed(1)} %`:'--','#FF8F00'],
+      ['SUBLANCE',      sim.measuredT?`${sim.measuredT}°C / ${sim.measuredC}%`:'STANDBY',sim.measuredT?'#57ab5a':'#37474F'],
+      ['HEAT NO',       heatNo,                                       '#546E7A'],
     ]
     hudRows.forEach(([l,v,c],i)=>{
       const ry=HY+18+i*RH
       ctx.fillStyle='#0a1422'; ctx.fillRect(HX,ry,HW,RH-2)
       ctx.strokeStyle='#1a3050'; ctx.lineWidth=0.3; ctx.strokeRect(HX,ry,HW,RH-2)
-      ctx.fillStyle='#4d7a9a'; ctx.font=`${clamp(W*0.009,7,10)}px monospace`; ctx.textAlign='left'; ctx.fillText(l,HX+5,ry+11)
-      ctx.fillStyle=c; ctx.font=`bold ${clamp(W*0.010,8,11)}px monospace`; ctx.textAlign='right'; ctx.fillText(v,HX+HW-4,ry+RH-5)
+      ctx.fillStyle='#4d7a9a'; ctx.font=`${clamp(W*0.009,7,9)}px monospace`; ctx.textAlign='left'; ctx.fillText(l,HX+5,ry+10)
+      ctx.fillStyle=c; ctx.font=`bold ${clamp(W*0.010,8,10)}px monospace`; ctx.textAlign='right'; ctx.fillText(v.length>20?v.substring(0,18)+'…':v,HX+HW-4,ry+RH-5)
     })
 
-    // ── STATUS STRIP ──────────────────────────────────────────────────────
-    ctx.fillStyle='rgba(4,8,18,0.82)'; ctx.fillRect(0,0,W,H*0.027)
-    ;[
-      {l:'BATH TEMP',  v:`${Math.round(sim.bathTemp)}°C`,  c:heatColor(sim.bathTemp,1400,1700)},
-      {l:'BATH [C]',   v:`${sim.bathC.toFixed(3)}%`,       c:'#29B6F6'},
-      {l:'BLOW',       v:`${blowPct.toFixed(1)}%`,         c:blowPct>90?'#f85149':'#FF8F00'},
-      {l:'SLAG FOAM',  v:`${(sim.slagFoaming*100).toFixed(0)}%`, c:'#8BC34A'},
-      {l:'OFF-GAS CO', v:running?`${Math.round(65+sim.offGasFlow*15)}%`:'--', c:'#9B8040'},
-      {l:'STATUS',     v:running?'BLOWING ●':'STANDBY ○',  c:running?'#57ab5a':'#546E7A'},
-    ].forEach(({l,v,c},ki)=>{
-      const px=W*0.01+ki*W*0.165
-      ctx.fillStyle='#4d7a9a'; ctx.font=`${clamp(W*0.009,6,9)}px monospace`; ctx.textAlign='left'; ctx.fillText(l,px,H*0.012)
-      ctx.fillStyle=c; ctx.font=`bold ${clamp(W*0.010,7,10)}px monospace`; ctx.fillText(v,px,H*0.023)
-    })
-
-    // ── HOVER TOOLTIPS ────────────────────────────────────────────────────
+    // ── TOOLTIP ────────────────────────────────────────────────────────────
     const mx=mouseRef.current.x, my=mouseRef.current.y
     let tooltip=null
-
-    // Hit: bath (steel melt)
-    if (!tooltip && my>BATH_SURFACE_Y && my<VB) {
-      const yFrac=clamp((my-VT)/VH,0,1)
-      const hw2=vHW(yFrac)*0.88
-      if (mx>VCX-hw2 && mx<VCX+hw2) {
-        tooltip={title:'LIQUID STEEL BATH',color:heatColor(sim.bathTemp,1380,1700),lines:[
-          {label:'Temperature',value:`${Math.round(sim.bathTemp)} °C`,col:heatColor(sim.bathTemp,1380,1700)},
+    // Bath
+    if(!tooltip&&my>BATH_Y&&my<VB){
+      const yf=clamp((my-VT)/VH,0,1)
+      if(mx>VCX-vHW(yf)*0.9&&mx<VCX+vHW(yf)*0.9){
+        tooltip={title:'LIQUID STEEL BATH',color:heatColor(sim.bathTemp,1380,1720),lines:[
+          {label:'Temperature',value:`${Math.round(sim.bathTemp)} °C`,col:heatColor(sim.bathTemp,1380,1720)},
           {label:'Carbon [C]',value:`${sim.bathC.toFixed(4)} %`,col:'#29B6F6'},
           {label:'Silicon [Si]',value:`${sim.bathSi.toFixed(4)} %`,col:'#FFB300'},
           {label:'Manganese [Mn]',value:`${sim.bathMn.toFixed(4)} %`,col:'#9b5de5'},
-          {label:'Reactions',value:'C+O₂→CO  Si+O₂→SiO₂',col:'#8BC34A'},
-          {label:'Gas evolved',value:'CO bubbles rising → CO₂',col:'rgba(180,155,50,0.9)'},
-          {label:'Weight',value:`~${Math.round(hmWeight+scrapWeight)} t (HM+Scrap)`,col:'#78909C'},
+          {label:'Main reaction',value:'C + ½O₂ → CO (decarb)',col:'#8BC34A'},
+          {label:'CO gas',value:'Stirs bath → post-comb → CO₂',col:'rgba(175,148,45,0.9)'},
+          {label:'Weight',value:`~${Math.round(hmWeight+scrapWeight)} t total`,col:'#78909C'},
         ]}
       }
     }
-
-    // Hit: slag layer
-    if (!tooltip && my>SLAG_Y && my<BATH_SURFACE_Y) {
-      const sf=clamp((SLAG_Y-VT)/VH,0,1)
-      if (mx>VCX-vHW(sf)*0.92 && mx<VCX+vHW(sf)*0.92) {
+    // Slag
+    if(!tooltip&&my>SLAG_Y&&my<BATH_Y){
+      const sf2=clamp((SLAG_Y-VT)/VH,0,1)
+      if(mx>VCX-vHW(sf2)*0.9&&mx<VCX+vHW(sf2)*0.9){
         tooltip={title:'SLAG LAYER',color:'#8BC34A',lines:[
-          {label:'Thickness',value:`${Math.round(sim.slagThickness)} mm`,col:'#8BC34A'},
-          {label:'Foaming',value:`${(sim.slagFoaming*100).toFixed(0)} % intensity`,col:'#7C9060'},
+          {label:'Thickness',value:`${Math.round(sim.slagThick)} mm`,col:'#8BC34A'},
+          {label:'Foaming',value:`${(sim.slagFoam*100).toFixed(0)} %`,col:'#7C9060'},
           {label:'Composition',value:'CaO-SiO₂-FeO-MnO-Al₂O₃',col:'rgba(180,200,160,0.9)'},
-          {label:'Basicity V',value:`~${(2.5+sim.slagFoaming*0.8).toFixed(1)} CaO/SiO₂`,col:'#A5D6A7'},
-          {label:'Role',value:'Dephosphorisation, desulphurisation',col:'rgba(180,200,160,0.9)'},
-          {label:'Foaming by',value:'CO gas bubbles through slag',col:'rgba(180,155,50,0.9)'},
+          {label:'Basicity V',value:`~${(2.5+sim.slagFoam*0.8).toFixed(1)} CaO/SiO₂`,col:'#A5D6A7'},
+          {label:'Purpose',value:'Dephosphorisation + desulphurisation',col:'rgba(180,200,160,0.9)'},
         ]}
       }
     }
-
-    // Hit: lance
-    if (!tooltip && mx>LANCE_X-20 && mx<LANCE_X+20 && my>VT-H*0.08 && my<LANCE_TIP_Y) {
+    // CO gas
+    sim.coGas.forEach(p=>{
+      if(Math.sqrt((mx-p.x)**2+(my-p.y)**2)<Math.max(p.r*2.5,10)){
+        tooltip={title:'CO Gas (Rising)',color:'#B8A040',lines:[
+          {label:'Type',value:'Carbon Monoxide CO',col:'#FFD54F'},
+          {label:'Origin',value:'C + ½O₂ → CO in impact zone',col:'rgba(180,200,210,0.9)'},
+          {label:'Effect',value:'Stirs bath, promotes mixing',col:'#A5D6A7'},
+          {label:'Post-combustion',value:'CO + ½O₂ → CO₂ in hood',col:'#8BC34A'},
+          {label:'% in off-gas',value:`~${Math.round(62+sim.offGasParticles.length*0.5)} %`,col:'rgba(175,148,45,0.9)'},
+        ]}
+      }
+    })
+    // Lance
+    if(!tooltip&&stage==='BLOWING'&&mx>LANCE_X-20&&mx<LANCE_X+20&&my>LANCE_TOP&&my<LANCE_DRAWN_BOT){
       tooltip={title:'OXYGEN LANCE',color:'#29B6F6',lines:[
-          {label:'Height',value:`${lanceHeight} mm from bath`,col:'#29B6F6'},
-          {label:'O₂ flow',value:`${o2Flow} Nm³/min`,col:'#81D4FA'},
-          {label:'O₂ pressure',value:'~10–12 bar at tip',col:'#4FC3F7'},
-          {label:'Cooling',value:'Water-cooled copper tip',col:'#0288D1'},
-          {label:'Jet type',value:'Laval nozzle — supersonic jets',col:'rgba(180,200,210,0.9)'},
-          {label:'Impact',value:'Creates cavity in bath surface',col:'rgba(180,200,210,0.9)'},
-          {label:'Reaction',value:'O₂+C→CO  O₂+Si→SiO₂  O₂+Fe→FeO',col:'#8BC34A'},
+        {label:'Height',value:`${lanceHeight} mm from bath`,col:'#29B6F6'},
+        {label:'O₂ flow',value:`${o2Flow} Nm³/min`,col:'#81D4FA'},
+        {label:'Tip',value:'Water-cooled copper 4-nozzle',col:'#0288D1'},
+        {label:'Jet speed',value:'Supersonic ~Mach 2',col:'rgba(180,200,210,0.9)'},
+        {label:'Impact',value:'C+O₂→CO  Si+O₂→SiO₂  Fe+O₂→FeO',col:'#8BC34A'},
       ]}
     }
-
-    // Hit: impact zone
-    if (!tooltip && blowPct>0) {
-      const impY2=LANCE_TIP_Y+20
-      if (Math.abs(mx-VCX)<vHW(0.28)*0.35 && Math.abs(my-impY2)<22) {
-        tooltip={title:'IMPACT / COMBUSTION ZONE',color:'#FF8F00',lines:[
-          {label:'Temperature',value:`~2000–2500°C at jet tip`,col:'#FF3D00'},
-          {label:'O₂ jet',value:'Supersonic — 300–500 m/s',col:'#29B6F6'},
-          {label:'Reaction 1',value:'C + O₂ → CO₂ (primary)',col:'#8BC34A'},
-          {label:'Reaction 2',value:'Si + O₂ → SiO₂ → slag',col:'#FFB300'},
-          {label:'Reaction 3',value:'Mn + O₂ → MnO → slag',col:'#9b5de5'},
-          {label:'Reaction 4',value:'Fe + O₂ → FeO → slag',col:'#FF5722'},
-          {label:'CO produced',value:'Rises through bath as bubbles',col:'rgba(180,155,50,0.9)'},
-        ]}
-      }
-    }
-
-    // Hit: CO gas bubble
-    if (!tooltip) {
-      sim.coGas.forEach(p=>{
-        if (Math.sqrt((mx-p.x)**2+(my-p.y)**2)<Math.max(p.r*2.5,10)) {
-          tooltip={title:'CO Gas (Rising)',color:'#B8A040',lines:[
-            {label:'Type',value:'Carbon Monoxide CO',col:'#FFD54F'},
-            {label:'Origin',value:'C + ½O₂ → CO  in bath',col:'rgba(180,200,210,0.9)'},
-            {label:'Role',value:'Stirs bath — promotes homogeneity',col:'#A5D6A7'},
-            {label:'Post-combustion',value:'CO + ½O₂ → CO₂ (above bath)',col:'#8BC34A'},
-            {label:'Off-gas',value:`~${Math.round(65+sim.offGasFlow*15)}% CO in off-gas`,col:'rgba(180,155,50,0.9)'},
-            {label:'Heat',value:'CO post-combustion adds ~15% heat',col:'#FF8F00'},
-          ]}
-        }
-      })
-    }
-
-    // Hit: CO2 gas
-    if (!tooltip) {
-      sim.co2Gas.forEach(p=>{
-        if (Math.sqrt((mx-p.x)**2+(my-p.y)**2)<Math.max(p.r*2.5,10)) {
-          tooltip={title:'CO₂ Gas (Post-combustion)',color:'#6B9E45',lines:[
-            {label:'Type',value:'Carbon Dioxide CO₂',col:'#8BC34A'},
-            {label:'Origin',value:'CO + ½O₂ → CO₂ (hood zone)',col:'rgba(180,200,160,0.9)'},
-            {label:'Zone',value:'Upper vessel / gas space',col:'#78909C'},
-            {label:'Off-gas',value:`~${Math.round(14+sim.offGasFlow*5)}% CO₂ in off-gas`,col:'rgba(140,180,80,0.9)'},
-            {label:'Goes to',value:'OG system → gas cleaning plant',col:'#A5D6A7'},
-          ]}
-        }
-      })
-    }
-
-    // Hit: hot metal ladle
-    if (!tooltip && mx>HL_X && mx<HL_X+HL_W && my>HL_Y && my<HL_Y+HL_H) {
-      tooltip={title:'HOT METAL (BF Iron)',color:'#FF7043',lines:[
-        {label:'Weight',value:`${hmWeight} t`,col:'#FF8F00'},
+    // HM ladle
+    const hmLDX=sim.ladlePoured?W*0.88:sim.craneX*W
+    const hmLDY=sim.ladlePoured?H*0.30:sim.craneY*H
+    if(!tooltip&&mx>hmLDX-W*0.05&&mx<hmLDX+W*0.05&&my>hmLDY-H*0.02&&my<hmLDY+H*0.16){
+      tooltip={title:'HOT METAL LADLE',color:'#FF7043',lines:[
+        {label:'Weight',value:`${(sim.ladleLevel*hmWeight).toFixed(1)} / ${hmWeight} t`,col:'#FF8F00'},
         {label:'Temperature',value:`${hmTemp} °C`,col:'#FF6D00'},
         {label:'Carbon [C]',value:`${hmC} %`,col:'#29B6F6'},
         {label:'Silicon [Si]',value:`${hmSi} %`,col:'#FFB300'},
-        {label:'Manganese [Mn]',value:`${hmMn} %`,col:'#9b5de5'},
         {label:'Phosphorus [P]',value:`${hmP} %`,col:'#f85149'},
-        {label:'Source',value:'Torpedo ladle from Blast Furnace',col:'#78909C'},
+        {label:'Load cell',value:`${sim.hmLadleWeight.toFixed(0)} kg`,col:'#39c5cf'},
       ]}
     }
 
-    // Hit: sub-lance
-    if (!tooltip && sim.subLanceDeploy) {
-      const SLX2=VCX-LANCE_W*1.8
-      if (Math.abs(mx-SLX2)<15 && my>VT-H*0.04 && my<VT+sim.subLanceY) {
-        tooltip={title:'SUB-LANCE MEASUREMENT',color:'#57ab5a',lines:[
-          {label:'Measured temp',value:sim.measuredTemp?`${sim.measuredTemp} °C`:'---',col:'#57ab5a'},
-          {label:'Measured [C]',value:sim.measuredC?`${sim.measuredC} %`:'---',col:'#29B6F6'},
-          {label:'Blow point',value:`${blowPct.toFixed(0)}% of blow`,col:'#FF8F00'},
-          {label:'Purpose',value:'Actual T+C at 85% blow',col:'rgba(180,200,210,0.9)'},
-          {label:'Sensor',value:'Disposable thermocouple + C sensor',col:'#78909C'},
-          {label:'Action',value:'Model corrected from measurement',col:'#A5D6A7'},
-        ]}
-      }
-    }
-
     // Draw tooltip
-    if (tooltip) {
-      const TW=clamp(W*0.32,280,400)
-      const lineH=25,pad=16
+    if(tooltip){
+      const TW=clamp(W*0.30,270,390); const lineH=25,pad=16
       const TH=pad*2+30+tooltip.lines.length*lineH+8
       let tx=mx+18, ty=my-TH/2
-      if(tx+TW>W-10) tx=mx-TW-18
-      if(ty<32) ty=32
-      if(ty+TH>H-32) ty=H-TH-32
+      if(tx+TW>W-10)tx=mx-TW-18; if(ty<32)ty=32; if(ty+TH>H-32)ty=H-TH-32
       ctx.shadowColor='rgba(0,0,0,0.65)'; ctx.shadowBlur=14
       ctx.fillStyle='rgba(5,12,25,0.95)'; ctx.strokeStyle=tooltip.color; ctx.lineWidth=1.5
-      // Manual rounded rect (polyfill)
       const r6=6
-      ctx.beginPath()
-      ctx.moveTo(tx+r6,ty); ctx.lineTo(tx+TW-r6,ty); ctx.arcTo(tx+TW,ty,tx+TW,ty+r6,r6)
+      ctx.beginPath(); ctx.moveTo(tx+r6,ty); ctx.lineTo(tx+TW-r6,ty); ctx.arcTo(tx+TW,ty,tx+TW,ty+r6,r6)
       ctx.lineTo(tx+TW,ty+TH-r6); ctx.arcTo(tx+TW,ty+TH,tx+TW-r6,ty+TH,r6)
       ctx.lineTo(tx+r6,ty+TH); ctx.arcTo(tx,ty+TH,tx,ty+TH-r6,r6)
       ctx.lineTo(tx,ty+r6); ctx.arcTo(tx,ty,tx+r6,ty,r6)
       ctx.closePath(); ctx.fill(); ctx.stroke()
       ctx.shadowBlur=0
       ctx.fillStyle=tooltip.color+'28'; ctx.fillRect(tx+1,ty+1,TW-2,32)
-      ctx.fillStyle=tooltip.color; ctx.font=`bold ${clamp(W*0.015,13,17)}px monospace`; ctx.textAlign='left'
+      ctx.fillStyle=tooltip.color; ctx.font=`bold ${clamp(W*0.014,12,16)}px monospace`; ctx.textAlign='left'
       ctx.fillText(tooltip.title,tx+pad,ty+21)
       ctx.strokeStyle=tooltip.color+'45'; ctx.lineWidth=0.8
       ctx.beginPath(); ctx.moveTo(tx+pad,ty+36); ctx.lineTo(tx+TW-pad,ty+36); ctx.stroke()
       tooltip.lines.forEach((line,li)=>{
-        const ly=ty+54+li*lineH
-        ctx.fillStyle='rgba(170,195,215,0.90)'; ctx.font=`${clamp(W*0.012,11,14)}px monospace`; ctx.textAlign='left'
-        ctx.fillText(line.label+':',tx+pad,ly)
-        ctx.fillStyle=line.col; ctx.font=`bold ${clamp(W*0.012,11,14)}px monospace`; ctx.textAlign='right'
-        const val=line.value.length>32?line.value.substring(0,30)+'…':line.value
-        ctx.fillText(val,tx+TW-pad,ly)
+        const ly2=ty+54+li*lineH
+        ctx.fillStyle='rgba(170,195,215,0.90)'; ctx.font=`${clamp(W*0.012,10,13)}px monospace`; ctx.textAlign='left'; ctx.fillText(line.label+':',tx+pad,ly2)
+        ctx.fillStyle=line.col; ctx.font=`bold ${clamp(W*0.012,10,13)}px monospace`; ctx.textAlign='right'
+        ctx.fillText(line.value.length>30?line.value.substring(0,28)+'…':line.value,tx+TW-pad,ly2)
       })
       ctx.fillStyle=tooltip.color; ctx.beginPath(); ctx.arc(mx,my,4,0,Math.PI*2); ctx.fill()
       ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=1; ctx.stroke()
@@ -813,50 +927,33 @@ function BOFCanvas({
     // Footer
     ctx.fillStyle='rgba(4,8,18,0.92)'; ctx.fillRect(0,H-18,W,18)
     ctx.fillStyle='#2c4055'; ctx.font=`${clamp(W*0.009,7,10)}px monospace`; ctx.textAlign='left'
-    ctx.fillText(`BOF STEELMAKING  |  ${heatNo}  |  HM:${hmWeight}t  |  SCRAP:${scrapWeight}t  |  BLOW:${blowPct.toFixed(1)}%  |  ${new Date().toLocaleTimeString()}`,8,H-4)
+    ctx.fillText(`BOF STEELMAKING  |  ${heatNo}  |  HM:${hmWeight}t  SCRAP:${scrapWeight}t  |  STAGE:${stage}  |  ${new Date().toLocaleTimeString()}`,8,H-4)
 
-    } catch(e) {
+    }catch(e){
       ctx.fillStyle='#06090f'; ctx.fillRect(0,0,W,H)
       ctx.fillStyle='#e5534b'; ctx.font='14px monospace'; ctx.textAlign='left'
-      ctx.fillText('RENDER ERROR: '+e.message,20,40)
-      console.error('BOFCanvas error:',e)
+      ctx.fillText('ERROR: '+e.message,20,40); console.error('BOFCanvas:',e)
     }
+    rafRef.current=requestAnimationFrame(draw)
+  },[stage,blowPct,running,hmWeight,hmTemp,hmC,hmSi,hmMn,hmP,scrapWeight,fluxWeight,faWeight,targetTemp,targetC,lanceHeight,o2Flow,heatNo])
 
-    rafRef.current = requestAnimationFrame(draw)
-  }, [running, blowPct, speed, hmWeight, hmTemp, hmC, hmSi, hmMn, hmP, scrapWeight, targetTemp, targetC, lanceHeight, o2Flow, heatNo])
-
-  useEffect(() => {
-    rafRef.current = requestAnimationFrame(draw)
-    return () => cancelAnimationFrame(rafRef.current)
-  }, [draw])
-
-  return <canvas ref={canvasRef} style={{width:'100%',height:'100%',display:'block'}} />
+  useEffect(()=>{rafRef.current=requestAnimationFrame(draw);return()=>cancelAnimationFrame(rafRef.current)},[draw])
+  return <canvas ref={canvasRef} style={{width:'100%',height:'100%',display:'block'}}/>
 }
 
-// ─── UI ───────────────────────────────────────────────────────────────────────
-const C = {
-  bg:'#07090f', panel:'#0b1220', border:'#1a2d45',
-  text:'#cdd9e5', muted:'#6e8098', accent:'#FF8F00',
-  success:'#57ab5a', danger:'#e5534b', cyan:'#39c5cf',
-}
-
+// ─── UI ──────────────────────────────────────────────────────────────────────
+const C={bg:'#07090f',panel:'#0b1220',border:'#1a2d45',text:'#cdd9e5',muted:'#6e8098',accent:'#FF8F00',success:'#57ab5a',danger:'#e5534b',cyan:'#39c5cf'}
 function Slider({label,value,onChange,min,max,step=1,unit,disabled,color}){
-  return(
-    <div style={{marginBottom:12}}>
-      <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
-        <span style={{fontSize:10,color:C.muted,textTransform:'uppercase',letterSpacing:'0.07em'}}>{label}</span>
-        <span style={{fontSize:11,color:color||C.accent,fontFamily:'monospace',fontWeight:700}}>{value}{unit}</span>
-      </div>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={e=>onChange(+e.target.value)} disabled={disabled}
-        style={{width:'100%',accentColor:color||C.accent,opacity:disabled?0.4:1,cursor:disabled?'not-allowed':'pointer',height:20}}/>
-    </div>
-  )
+  return(<div style={{marginBottom:10}}>
+    <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}><span style={{fontSize:10,color:C.muted,textTransform:'uppercase',letterSpacing:'0.07em'}}>{label}</span><span style={{fontSize:11,color:color||C.accent,fontFamily:'monospace',fontWeight:700}}>{value}{unit}</span></div>
+    <input type="range" min={min} max={max} step={step} value={value} onChange={e=>onChange(+e.target.value)} disabled={disabled} style={{width:'100%',accentColor:color||C.accent,opacity:disabled?0.4:1,cursor:disabled?'not-allowed':'pointer',height:20}}/>
+  </div>)
 }
 
 export default function BOFRealTimeTDModel(){
-  const [running,setRunning]         = useState(false)
+  const [stage,setStage]             = useState('SCRAP_CHARGE')
   const [blowPct,setBlowPct]         = useState(0)
-  const [speed,setSpeed]             = useState(1)
+  const [running,setRunning]         = useState(false)
   const [hmWeight,setHmWeight]       = useState(280)
   const [hmTemp,setHmTemp]           = useState(1345)
   const [hmC,setHmC]                 = useState(4.5)
@@ -864,126 +961,113 @@ export default function BOFRealTimeTDModel(){
   const [hmMn,setHmMn]               = useState(0.35)
   const [hmP,setHmP]                 = useState(0.12)
   const [scrapWeight,setScrapWeight] = useState(45)
+  const [fluxWeight,setFluxWeight]   = useState(4.5)
+  const [faWeight,setFaWeight]       = useState(1.2)
   const [targetTemp,setTargetTemp]   = useState(1680)
   const [targetC,setTargetC]         = useState(0.06)
   const [lanceHeight,setLanceHeight] = useState(2200)
   const [o2Flow,setO2Flow]           = useState(520)
+  const [blowSpeed,setBlowSpeed]     = useState(1)
   const [panelOpen,setPanelOpen]     = useState(true)
   const [currentTemp,setCurrentTemp] = useState(1265)
   const [currentC,setCurrentC]       = useState('4.500')
+  const [ladleWt,setLadleWt]         = useState(hmWeight*1000)
   const [elapsed,setElapsed]         = useState(0)
   const [resetCount,setResetCount]   = useState(0)
-  const [heatNo]                     = useState(`BF-${Math.floor(Math.random()*9000+1000)}`)
-  const [extraData,setExtraData]     = useState({})
-  const blowRef = useRef(null), timerRef = useRef(null)
+  const [heatNo]                     = useState(`BOF-${Math.floor(Math.random()*9000+1000)}`)
+  const blowRef=useRef(null), timerRef=useRef(null)
+
+  const nextStage=useCallback(()=>{
+    setStage(s=>{
+      const idx=STAGES.indexOf(s)
+      if(idx<STAGES.length-1) return STAGES[idx+1]
+      return s
+    })
+  },[])
 
   useEffect(()=>{
-    if(running){
-      blowRef.current=setInterval(()=>setBlowPct(v=>{if(v>=100){setRunning(false);return 100}return Math.min(100,v+speed*0.15)}),100)
+    if(stage==='BLOWING'&&running){
+      blowRef.current=setInterval(()=>setBlowPct(v=>{if(v>=100){setRunning(false);nextStage();return 100}return Math.min(100,v+blowSpeed*0.00926)}),100)
+      // 0.00926 %/100ms = 0.0926%/s = 18 min at blowSpeed=1
       timerRef.current=setInterval(()=>setElapsed(t=>t+1),1000)
-    } else {
-      clearInterval(blowRef.current); clearInterval(timerRef.current)
-    }
+    } else {clearInterval(blowRef.current);clearInterval(timerRef.current)}
     return()=>{clearInterval(blowRef.current);clearInterval(timerRef.current)}
-  },[running,speed])
+  },[stage,running,blowSpeed,nextStage])
 
-  const startBlow=()=>{setRunning(true);setBlowPct(0);setElapsed(0);setResetCount(c=>c+1)}
+  const startHeat=()=>{setStage('SCRAP_CHARGE');setBlowPct(0);setElapsed(0);setResetCount(c=>c+1);setRunning(true)}
+  const startBlow=()=>{setRunning(true)}
   const stopBlow=()=>setRunning(false)
   const fmt=t=>`${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`
-
-  const tempDiff = currentTemp - targetTemp
-  const cDiff    = parseFloat(currentC) - targetC
+  const stageIdx=STAGES.indexOf(stage)
 
   return(
     <div style={{height:'100dvh',background:C.bg,color:C.text,fontFamily:'monospace',display:'flex',flexDirection:'column',overflow:'hidden'}}>
-      {/* Header */}
       <div style={{background:'#060a10',borderBottom:`1px solid ${C.border}`,padding:'0 12px',height:48,display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
         <div style={{display:'flex',alignItems:'center',gap:10}}>
           <span style={{fontSize:20}}>🔥</span>
           <div>
-            <div style={{fontSize:11,fontWeight:700,letterSpacing:'0.04em'}}>BOF REAL-TIME TD MODEL</div>
-            <div style={{fontSize:8,color:C.muted,letterSpacing:'0.1em'}}>TEMPERATURE & DECARBURISATION PREDICTION · VIRTUAL PLANT</div>
+            <div style={{fontSize:11,fontWeight:700,letterSpacing:'0.04em'}}>BOF STEELMAKING — REAL-TIME TD MODEL</div>
+            <div style={{fontSize:8,color:C.muted,letterSpacing:'0.1em'}}>FULL HEAT SEQUENCE: CHARGE → BLOW → SUBLANCE → TAP</div>
           </div>
         </div>
-        <div style={{display:'flex',alignItems:'center',gap:12}}>
-          {[
-            {l:'TIME',  v:fmt(elapsed),              c:running?C.success:C.muted},
-            {l:'TEMP',  v:`${currentTemp}°C`,        c:tempDiff>20?C.danger:tempDiff<-20?'#29B6F6':C.success},
-            {l:'[C]%',  v:`${currentC}%`,            c:parseFloat(currentC)>targetC+0.05?'#FF8F00':C.success},
-            {l:'BLOW',  v:`${blowPct.toFixed(1)}%`,  c:blowPct>90?C.danger:'#FF8F00'},
-            {l:'HEAT',  v:heatNo,                    c:C.muted},
-          ].map(item=>(
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          {[{l:'TIME',v:fmt(elapsed),c:running?C.success:C.muted},{l:'TEMP',v:`${currentTemp}°C`,c:C.accent},{l:'[C]%',v:`${currentC}%`,c:'#29B6F6'},{l:'BLOW',v:`${blowPct.toFixed(0)}%`,c:'#FF8F00'},{l:'HEAT',v:heatNo,c:C.muted}].map(item=>(
             <div key={item.l} style={{textAlign:'center'}}>
               <div style={{fontSize:7,color:C.muted}}>{item.l}</div>
               <div style={{fontSize:12,fontWeight:700,color:item.c}}>{item.v}</div>
             </div>
           ))}
-          <button onClick={()=>setPanelOpen(v=>!v)}
-            style={{padding:'4px 8px',borderRadius:3,border:`1px solid ${C.border}`,background:'transparent',color:C.muted,fontSize:11,cursor:'pointer'}}>
-            {panelOpen?'◀':'▶'}
-          </button>
-          {!running && blowPct<100 && <button onClick={startBlow} style={{padding:'6px 14px',borderRadius:4,border:`1px solid ${C.success}`,background:'rgba(87,171,90,0.15)',color:C.success,fontSize:11,fontWeight:700,cursor:'pointer'}}>▶ START BLOW</button>}
-          {running && <button onClick={stopBlow} style={{padding:'6px 14px',borderRadius:4,border:`1px solid ${C.danger}`,background:'rgba(229,83,73,0.15)',color:C.danger,fontSize:11,fontWeight:700,cursor:'pointer'}}>⏹ STOP</button>}
-          {blowPct>=100 && <button onClick={()=>{setBlowPct(0);setElapsed(0);setRunning(false);setResetCount(c=>c+1)}} style={{padding:'6px 14px',borderRadius:4,border:`1px solid ${C.cyan}`,background:'rgba(57,197,207,0.15)',color:C.cyan,fontSize:11,fontWeight:700,cursor:'pointer'}}>↺ NEW HEAT</button>}
+          <button onClick={()=>setPanelOpen(v=>!v)} style={{padding:'4px 8px',borderRadius:3,border:`1px solid ${C.border}`,background:'transparent',color:C.muted,fontSize:11,cursor:'pointer'}}>{panelOpen?'◀':'▶'}</button>
+          <button onClick={startHeat} style={{padding:'6px 12px',borderRadius:4,border:`1px solid ${C.success}`,background:'rgba(87,171,90,0.15)',color:C.success,fontSize:11,fontWeight:700,cursor:'pointer'}}>↺ NEW HEAT</button>
+          {stage==='BLOWING'&&!running&&blowPct<100&&<button onClick={startBlow} style={{padding:'6px 12px',borderRadius:4,border:`1px solid ${C.accent}`,background:'rgba(255,143,0,0.15)',color:C.accent,fontSize:11,fontWeight:700,cursor:'pointer'}}>▶ BLOW</button>}
+          {stage==='BLOWING'&&running&&<button onClick={stopBlow} style={{padding:'6px 12px',borderRadius:4,border:`1px solid ${C.danger}`,background:'rgba(229,83,73,0.15)',color:C.danger,fontSize:11,fontWeight:700,cursor:'pointer'}}>⏹ HOLD</button>}
+          {stage!=='BLOWING'&&stage!=='COMPLETE'&&<button onClick={nextStage} style={{padding:'6px 12px',borderRadius:4,border:`1px solid ${C.cyan}`,background:'rgba(57,197,207,0.15)',color:C.cyan,fontSize:11,fontWeight:700,cursor:'pointer'}}>NEXT ▶</button>}
         </div>
       </div>
 
       <div style={{display:'flex',flex:1,overflow:'hidden'}}>
         {panelOpen&&(
           <div style={{width:220,background:C.panel,borderRight:`1px solid ${C.border}`,overflow:'auto',flexShrink:0,padding:'12px'}}>
-            <div style={{fontSize:9,color:C.muted,letterSpacing:'0.12em',marginBottom:10}}>HOT METAL</div>
-            <Slider label="HM Weight"  value={hmWeight}  onChange={setHmWeight}  min={150} max={380} unit="t"   disabled={running} color='#FF7043'/>
-            <Slider label="HM Temp"    value={hmTemp}    onChange={setHmTemp}    min={1280} max={1420} unit="°C" disabled={running} color='#FF6D00'/>
-            <Slider label="HM [C]%"    value={hmC}       onChange={setHmC}       min={3.5} max={5.0} step={0.05} unit="%" disabled={running} color='#29B6F6'/>
-            <Slider label="HM [Si]%"   value={hmSi}      onChange={setHmSi}      min={0.10} max={1.50} step={0.05} unit="%" disabled={running} color='#FFB300'/>
-            <Slider label="HM [Mn]%"   value={hmMn}      onChange={setHmMn}      min={0.10} max={1.0} step={0.05} unit="%" disabled={running} color='#9b5de5'/>
-            <Slider label="HM [P]%"    value={hmP}       onChange={setHmP}       min={0.05} max={0.35} step={0.01} unit="%" disabled={running} color='#f85149'/>
-            <Slider label="Scrap Wt"   value={scrapWeight} onChange={setScrapWeight} min={10} max={120} unit="t" disabled={running} color='#546E7A'/>
-            <div style={{height:1,background:C.border,margin:'10px 0'}}/>
-            <div style={{fontSize:9,color:C.muted,letterSpacing:'0.12em',marginBottom:10}}>TARGETS</div>
-            <Slider label="Target Temp"  value={targetTemp} onChange={setTargetTemp} min={1600} max={1750} unit="°C" disabled={running} color='#57ab5a'/>
-            <Slider label="Target [C]%"  value={targetC}    onChange={setTargetC}    min={0.02} max={0.50} step={0.01} unit="%" disabled={running} color='#57ab5a'/>
-            <div style={{height:1,background:C.border,margin:'10px 0'}}/>
-            <div style={{fontSize:9,color:C.muted,letterSpacing:'0.12em',marginBottom:10}}>BLOW CONTROL</div>
+            <div style={{fontSize:9,color:C.muted,letterSpacing:'0.12em',marginBottom:8}}>HOT METAL</div>
+            <Slider label="HM Weight" value={hmWeight} onChange={setHmWeight} min={150} max={380} unit="t" disabled={stageIdx>1} color='#FF7043'/>
+            <Slider label="HM Temp"   value={hmTemp}   onChange={setHmTemp}   min={1280} max={1420} unit="°C" disabled={stageIdx>1} color='#FF6D00'/>
+            <Slider label="[C]%"      value={hmC}      onChange={setHmC}      min={3.5} max={5.0} step={0.05} unit="%" disabled={stageIdx>1} color='#29B6F6'/>
+            <Slider label="[Si]%"     value={hmSi}     onChange={setHmSi}     min={0.10} max={1.50} step={0.05} unit="%" disabled={stageIdx>1} color='#FFB300'/>
+            <Slider label="[Mn]%"     value={hmMn}     onChange={setHmMn}     min={0.10} max={1.0} step={0.05} unit="%" disabled={stageIdx>1} color='#9b5de5'/>
+            <Slider label="[P]%"      value={hmP}      onChange={setHmP}      min={0.05} max={0.35} step={0.01} unit="%" disabled={stageIdx>1} color='#f85149'/>
+            <div style={{height:1,background:C.border,margin:'8px 0'}}/>
+            <div style={{fontSize:9,color:C.muted,letterSpacing:'0.12em',marginBottom:8}}>CHARGE</div>
+            <Slider label="Scrap Wt"  value={scrapWeight}  onChange={setScrapWeight}  min={10} max={120} unit="t" disabled={stageIdx>0} color='#546E7A'/>
+            <Slider label="Flux Wt"   value={fluxWeight}   onChange={setFluxWeight}   min={1} max={12} step={0.5} unit="t" disabled={stageIdx>1} color='#A5D6A7'/>
+            <Slider label="FA Wt"     value={faWeight}     onChange={setFaWeight}     min={0.2} max={4} step={0.1} unit="t" disabled={stageIdx>5} color='#FFB300'/>
+            <div style={{height:1,background:C.border,margin:'8px 0'}}/>
+            <div style={{fontSize:9,color:C.muted,letterSpacing:'0.12em',marginBottom:8}}>TARGETS</div>
+            <Slider label="Target Temp" value={targetTemp} onChange={setTargetTemp} min={1600} max={1750} unit="°C" disabled={stageIdx>4} color='#57ab5a'/>
+            <Slider label="Target [C]%" value={targetC}    onChange={setTargetC}    min={0.02} max={0.50} step={0.01} unit="%" disabled={stageIdx>4} color='#57ab5a'/>
+            <div style={{height:1,background:C.border,margin:'8px 0'}}/>
+            <div style={{fontSize:9,color:C.muted,letterSpacing:'0.12em',marginBottom:8}}>BLOW CONTROL</div>
             <Slider label="Lance Height" value={lanceHeight} onChange={setLanceHeight} min={1400} max={3000} step={50} unit="mm" color='#29B6F6'/>
             <Slider label="O₂ Flow"      value={o2Flow}      onChange={setO2Flow}      min={300} max={650} unit=" Nm³/m" color='#81D4FA'/>
-            <Slider label="Blow Speed"   value={speed}       onChange={setSpeed}       min={0.5} max={3.0} step={0.1} unit="x" color='#FF8F00'/>
-            <div style={{height:1,background:C.border,margin:'10px 0'}}/>
-            <div style={{fontSize:9,color:C.muted,letterSpacing:'0.12em',marginBottom:8}}>PREDICTIONS</div>
-            {[
-              {l:'Bath Temp',  v:`${currentTemp}°C`,      c:tempDiff>20?C.danger:tempDiff<-20?'#29B6F6':C.success},
-              {l:'Bath [C]',   v:`${currentC}%`,           c:cDiff>0.05?'#FF8F00':C.success},
-              {l:'Temp diff',  v:`${tempDiff>0?'+':''}${tempDiff}°C`, c:Math.abs(tempDiff)<15?C.success:C.danger},
-              {l:'C diff',     v:`${cDiff>0?'+':''}${cDiff.toFixed(3)}%`, c:Math.abs(cDiff)<0.02?C.success:C.danger},
-            ].map(r=>(
-              <div key={r.l} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:`1px solid ${C.border}`}}>
-                <span style={{fontSize:9,color:C.muted}}>{r.l}</span>
-                <span style={{fontSize:10,fontWeight:600,color:r.c}}>{r.v}</span>
-              </div>
-            ))}
-            <div style={{height:1,background:C.border,margin:'10px 0'}}/>
-            <div style={{fontSize:9,color:'#4d7a9a',marginBottom:4}}>HOVER TOOLTIPS</div>
-            {[['🔵','Liquid steel bath'],['🟢','Slag layer'],['⚡','Impact/combustion zone'],['🟡','CO gas bubbles'],['🟩','CO₂ post-combustion'],['🔧','O₂ lance'],['🏺','Hot metal ladle'],['📡','Sub-lance']].map(([ic,l])=>(
-              <div key={l} style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
-                <span style={{fontSize:11}}>{ic}</span><span style={{fontSize:8,color:C.muted}}>{l}</span>
-              </div>
-            ))}
+            <Slider label="Blow Speed"   value={blowSpeed}   onChange={setBlowSpeed}   min={0.5} max={4.0} step={0.1} unit="x" color='#FF8F00'/>
             <div style={{height:1,background:C.border,margin:'8px 0'}}/>
-            <div style={{fontSize:9,color:'#4d7a9a',marginBottom:4}}>KEY REACTIONS</div>
-            {['C+O₂→CO (decarb)','Si+O₂→SiO₂ (slag)','Mn+O₂→MnO (slag)','CO+½O₂→CO₂ (hood)','CaO+SiO₂→slag (dephosphor)'].map(r=><div key={r} style={{fontSize:8,color:C.muted,marginBottom:3}}>{r}</div>)}
+            <div style={{fontSize:9,color:C.muted,marginBottom:6}}>SEQUENCE</div>
+            {STAGES.map((s,i)=>(
+              <div key={s} style={{display:'flex',alignItems:'center',gap:6,marginBottom:5}}>
+                <div style={{width:8,height:8,borderRadius:'50%',background:s===stage?'#FF8F00':i<stageIdx?C.success:'#1a2535',flexShrink:0,boxShadow:s===stage?'0 0 5px #FF8F00':'none'}}/>
+                <span style={{fontSize:8,color:s===stage?'#FF8F00':i<stageIdx?C.success:C.muted}}>{s.replace(/_/g,' ')}</span>
+              </div>
+            ))}
           </div>
         )}
         <div style={{flex:1,overflow:'hidden',background:'#06090f'}}>
           <BOFCanvas
-            running={running} blowPct={blowPct} speed={speed}
-            hmWeight={hmWeight} hmTemp={hmTemp} hmC={hmC}
-            hmSi={hmSi} hmMn={hmMn} hmP={hmP}
-            scrapWeight={scrapWeight} targetTemp={targetTemp} targetC={targetC}
-            lanceHeight={lanceHeight} o2Flow={o2Flow} heatNo={heatNo}
-            setCurrentTemp={setCurrentTemp} setCurrentC={setCurrentC}
-            setMoldLevel={()=>{}}
-            onDataUpdate={setExtraData}
-            doReset={resetCount}
+            stage={stage} blowPct={blowPct} running={running}
+            hmWeight={hmWeight} hmTemp={hmTemp} hmC={hmC} hmSi={hmSi} hmMn={hmMn} hmP={hmP}
+            scrapWeight={scrapWeight} fluxWeight={fluxWeight} faWeight={faWeight}
+            targetTemp={targetTemp} targetC={targetC} lanceHeight={lanceHeight} o2Flow={o2Flow} heatNo={heatNo}
+            ladleWeightKg={ladleWt} setLadleWeightKg={setLadleWt}
+            setCurrentTemp={setCurrentTemp} setCurrentC={setCurrentC} setMoldLevel={()=>{}}
+            onStageComplete={nextStage} doReset={resetCount}
           />
         </div>
       </div>
