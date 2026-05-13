@@ -6,7 +6,7 @@ import BilletCastingModel from './BilletCastingModel.jsx'
 import IronMakingModel from './IronMakingModel.jsx'
 import CokePlantModel from './Cokeplantmodel.jsx'
 import BOFVisualization from './BOFVisualization.jsx'
-
+import SinterPlantModel from './SinterPlantModel.jsx'
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
@@ -89,7 +89,9 @@ const NAV_ITEMS = [
   { id: 'billet_casting', icon: 'grid_on', label: 'Billet Casting', roles: ['admin','steel'] },
   { id: 'divider3', isDivider: true, label: 'Iron Making', roles: ['admin','steel'] },
   { id: 'iron_making', icon: 'local_fire_department', label: 'Blast Furnace', roles: ['admin','steel'] },
-  { id:'coke_plant', icon:'local_fire_department', label:'Coke Plant', roles:['admin','steel'] }
+  { id:'coke_plant', icon:'local_fire_department', label:'Coke Plant', roles:['admin','steel'] },
+  { id: 'divider_sinter', isDivider: true, label: 'Sinter Plant', roles: ['admin','steel'] },
+  { id: 'sinter_plant', icon: 'local_fire_department', label: 'Sinter Plant', roles: ['admin','steel'] },
 ]
 
 // Material Design colors
@@ -752,6 +754,13 @@ export default function App({ user, onLogout }) {
           {activeTab === 'coke_plant' && (
             <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
               <CokePlantModel />
+            </div>
+          )}
+
+          {/* Sinter Plant Model */}
+          {activeTab === 'sinter_plant' && (
+            <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+              <SinterPlantModel />
             </div>
           )}
                      
