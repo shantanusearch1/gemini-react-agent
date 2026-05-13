@@ -121,11 +121,19 @@ function BOFCanvas({
 
     try{
     // ── LAYOUT ────────────────────────────────────────────────────────────
-    const VCX = W*0.52      // vessel centre (shifted right — crane on left)
-    const VW  = W*0.10      // vessel half-width (smaller)
-    const VT  = H*0.22      // vessel top (lower — more crane headroom)
-    const VB  = H*0.88      // vessel bottom
-    const VH  = VB-VT
+    // ── ALL LAYOUT CONSTANTS (correct order, no hoisting issues) ──────────
+    const VCX = W*0.54      // vessel centre
+    const VW  = W*0.08      // vessel half-width at belly
+    const VT  = H*0.35      // vessel top
+    const VB  = H*0.92      // vessel bottom  ← MUST be before VPIVOT_Y
+    const VH  = VB - VT
+    const VCXT = VCX        // alias (rotation handles tilt)
+    // Vessel pivot = bottom centre
+    const VPIVOT_X = VCX
+    const VPIVOT_Y = VB
+    // No tilt — vessel always upright
+    const tiltDeg = 0
+    const tiltRad = 0
 
     // BOF profile: mouth narrows, belly wide, bottom dome
     const vHW=(yf)=>{
@@ -137,14 +145,21 @@ function BOFCanvas({
     }
 
     const BATH_Y    = VT+VH*(1-sim.bathLevel*0.56)
+    // Use VCXT for vessel-interior elements
+    const VCXI = VCXT   // alias for clarity
     const SLAG_Y    = BATH_Y - sim.slagThick*(1+sim.slagFoam*2.5)
     const LANCE_TIP = VT+VH*0.22 - (lanceHeight-1400)/700*VH*0.14
-    const TAPHOLE_Y = VT+VH*0.80
-    const TAPHOLE_X = VCX+vHW(0.80)-4
-    const SLAGHOLE_Y = VT+VH*0.62
-    const SLAGHOLE_X = VCX-vHW(0.62)+4
+    // Taphole & slaghole screen positions (accounting for vessel rotation)
+    const localTapX=VCX+vHW(0.80)-4, localTapY=VT+VH*0.80
+    const dtx=localTapX-VPIVOT_X, dty=localTapY-VPIVOT_Y
+    const TAPHOLE_X=VPIVOT_X+dtx*Math.cos(tiltRad)-dty*Math.sin(tiltRad)
+    const TAPHOLE_Y=VPIVOT_Y+dtx*Math.sin(tiltRad)+dty*Math.cos(tiltRad)
+    const localSlgX=VCX-vHW(0.62)+4, localSlgY=VT+VH*0.62
+    const dsx=localSlgX-VPIVOT_X, dsy=localSlgY-VPIVOT_Y
+    const SLAGHOLE_X=VPIVOT_X+dsx*Math.cos(tiltRad)-dsy*Math.sin(tiltRad)
+    const SLAGHOLE_Y=VPIVOT_Y+dsx*Math.sin(tiltRad)+dsy*Math.cos(tiltRad)
     // Crane rail Y
-    const CRANE_RAIL_Y = H*0.04
+    const CRANE_RAIL_Y = H*0.03   // rail at very top
 
     // ── PHYSICS ──────────────────────────────────────────────────────────
     sim.stageTimer += 0.016
@@ -155,11 +170,11 @@ function BOFCanvas({
       // Crane moves from left to over vessel, ladle tilts, HM pours, then crane moves back left
       if(!sim.ladlePoured){
         sim.craneLoad = 'hm_ladle'
-        // Move crane to vessel centre (from left)
-        const tgX=VCX/W, tgY=(VT-H*0.07)/H
+        // Move crane to vessel mouth (from left)
+        const tgX=(VCXT)/W, tgY=(VT-H*0.18)/H  // hook hangs above vessel mouth (tilted)
         sim.craneX+=(tgX-sim.craneX)*0.018; sim.craneY+=(tgY-sim.craneY)*0.018
         sim.drumAngle+=0.05
-        if(Math.abs(sim.craneX-tgX)<0.015){
+        if(Math.abs(sim.craneX-tgX)<0.02){
           // Pour
           sim.ladleLevel=Math.max(0, sim.ladleLevel-0.004)
           sim.hmLadleWeight=Math.round(sim.ladleLevel*hmWeight*1000)
@@ -170,8 +185,8 @@ function BOFCanvas({
           if(sim.frame%3===0) sim.steamPuffs.push({x:VCX+(Math.random()-0.5)*12,y:BATH_Y-10,vx:(Math.random()-0.5)*1.5,vy:-1.5-Math.random()*2,life:1,r:5+Math.random()*8})
           if(sim.ladleLevel<=0) {
             sim.ladlePoured=true
-            // Crane moves back left after pouring
-            sim.craneX=0.12; sim.craneY=0.06
+            // Crane moves back far left after pouring
+            sim.craneX=0.08; sim.craneY=0.06
           }
           // Continue to next stage only when crane is back at park
           if(sim.ladlePoured && Math.abs(sim.craneX-0.12)<0.02) onStageComplete()
@@ -182,7 +197,7 @@ function BOFCanvas({
     if(stage==='SCRAP_CHARGE'){
       // Scrap bucket tilts over vessel mouth
       sim.craneLoad='scrap_bucket'
-      const tgX=VCX/W, tgY=(VT-H*0.08)/H
+      const tgX=VCXT/W, tgY=(VT-H*0.18)/H
       sim.craneX+=(tgX-sim.craneX)*0.018
       sim.craneY+=(tgY-sim.craneY)*0.018
       sim.drumAngle+=0.04
@@ -203,7 +218,7 @@ function BOFCanvas({
 
     if(stage==='FLUX_CHARGE'){
       sim.fluxFalling=true
-      const LIME_X=VCX-W*0.25, DOLO_X=VCX-W*0.18
+      const LIME_X=VCX-W*0.30, DOLO_X=VCX-W*0.22
       // Lime particles (white-grey)
       if(sim.frame%3===0){
         sim.fluxParticles.push({x:LIME_X+(Math.random()-0.5)*W*0.02, y:H*0.18, vy:4+Math.random()*5, life:1, r:2+Math.random()*3, col:'rgba(200,205,190,0.82)'})
@@ -264,7 +279,14 @@ function BOFCanvas({
         sim.subLanceDone=true
         sim.measuredT=Math.round(sim.bathTemp-3+(Math.random()-0.5)*8)
         sim.measuredC=(sim.bathC+0.002).toFixed(3)
-        setTimeout(()=>onStageComplete(),2000)
+        sim.subLanceCompleteFrames=0  // use frame counter instead of setTimeout
+      }
+      if(sim.subLanceDone&&!sim.subLanceSentComplete){
+        sim.subLanceCompleteFrames=(sim.subLanceCompleteFrames||0)+1
+        if(sim.subLanceCompleteFrames>120){  // ~2 seconds at 60fps
+          sim.subLanceSentComplete=true
+          onStageComplete()
+        }
       }
     }
 
@@ -328,8 +350,8 @@ function BOFCanvas({
     // Crane bridge (moves along runway)
     const CRANE_BX = sim.craneX*W
     ctx.fillStyle='#1e2d3d'; ctx.strokeStyle='#2c4055'; ctx.lineWidth=1.5
-    ctx.fillRect(CRANE_BX-W*0.10,CRANE_RAIL_Y+8,W*0.20,H*0.030)
-    ctx.strokeRect(CRANE_BX-W*0.10,CRANE_RAIL_Y+8,W*0.20,H*0.030)
+    ctx.fillRect(CRANE_BX-W*0.14,CRANE_RAIL_Y+8,W*0.28,H*0.035)
+    ctx.strokeRect(CRANE_BX-W*0.14,CRANE_RAIL_Y+8,W*0.28,H*0.035)
     // Crane drum
     ctx.save(); ctx.translate(CRANE_BX,CRANE_RAIL_Y+14)
     ctx.rotate(sim.drumAngle)
@@ -359,39 +381,47 @@ function BOFCanvas({
     // ── SCRAP BUCKET (when stage=SCRAP_CHARGE, hangs from crane) ─────────
     if(stage==='SCRAP_CHARGE'||sim.scrapBucketTilted){
       const BKX=CRANE_BX, BKY=HOOK_Y+8
-      const tilt = sim.scrapBucketTilted ? Math.PI*0.55 : 0
-      ctx.save(); ctx.translate(BKX,BKY+H*0.06); ctx.rotate(tilt)
-      ctx.fillStyle='#263340'; ctx.strokeStyle='#37474F'; ctx.lineWidth=1.2
+      const tilt = sim.scrapBucketTilted ? Math.PI*0.60 : 0
+      // Rope from hook
+      ctx.strokeStyle='#546E7A'; ctx.lineWidth=2.5
+      ctx.beginPath(); ctx.moveTo(BKX-W*0.025,HOOK_Y+10); ctx.lineTo(BKX-W*0.055,BKY+H*0.06); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(BKX+W*0.025,HOOK_Y+10); ctx.lineTo(BKX+W*0.055,BKY+H*0.06); ctx.stroke()
+      ctx.save(); ctx.translate(BKX,BKY+H*0.09); ctx.rotate(tilt)
+      // Large visible bucket
+      ctx.fillStyle='#1e2d3d'; ctx.strokeStyle='#546E7A'; ctx.lineWidth=2
       ctx.beginPath()
-      ctx.moveTo(-W*0.04,0); ctx.lineTo(W*0.04,0)
-      ctx.lineTo(W*0.034,H*0.09); ctx.lineTo(-W*0.034,H*0.09); ctx.closePath()
+      ctx.moveTo(-W*0.065,0); ctx.lineTo(W*0.065,0)
+      ctx.lineTo(W*0.055,H*0.13); ctx.lineTo(-W*0.055,H*0.13); ctx.closePath()
       ctx.fill(); ctx.stroke()
+      // Hinge bolts
+      ctx.fillStyle='#607D8B'
+      ;[-W*0.06,W*0.06].forEach(bx=>{ctx.beginPath();ctx.arc(bx,0,4,0,Math.PI*2);ctx.fill()})
       if(!sim.scrapBucketEmpty){
-        ctx.fillStyle='rgba(35,32,26,0.9)'; ctx.fillRect(-W*0.036,4,W*0.072,H*0.08)
-        for(let si=0;si<5;si++){
-          ctx.fillStyle='rgba(50,48,40,0.7)'; ctx.fillRect(-W*0.03+si*W*0.014,8,W*0.012,H*0.04)
+        // Scrap metal pieces
+        ctx.fillStyle='rgba(38,35,28,0.92)'; ctx.fillRect(-W*0.058,4,W*0.116,H*0.115)
+        for(let si=0;si<7;si++){
+          const rx=(si-3)*W*0.016, ry=8+si%3*12
+          ctx.fillStyle=`rgba(${45+si*5},${42+si*4},${35+si*3},0.8)`
+          ctx.fillRect(rx,ry,W*0.014+si*0.002,H*0.025)
         }
+        // Scrap label
+        ctx.fillStyle='#90A4AE'; ctx.font=`bold ${clamp(W*0.010,8,11)}px monospace`; ctx.textAlign='center'
+        ctx.fillText(`${scrapWeight}t`,0,H*0.075)
       }
       ctx.restore()
-      // Rope from hook to bucket
-      ctx.strokeStyle='#37474F'; ctx.lineWidth=1.5
-      ctx.beginPath(); ctx.moveTo(BKX-W*0.02,HOOK_Y+8); ctx.lineTo(BKX-W*0.04+tilt*W*0.02,BKY+H*0.06); ctx.stroke()
-      ctx.beginPath(); ctx.moveTo(BKX+W*0.02,HOOK_Y+8); ctx.lineTo(BKX+W*0.04+tilt*W*0.02,BKY+H*0.06); ctx.stroke()
-      if(!sim.scrapBucketEmpty){
-        const wt=Math.round(scrapWeight*1000)
-        lbl(`${scrapWeight}t SCRAP BUCKET`,BKX,BKY+H*0.17,'#78909C',clamp(W*0.009,7,9))
-      }
+      if(!sim.scrapBucketEmpty) lbl('SCRAP BUCKET',BKX,BKY+H*0.24,'#78909C',clamp(W*0.009,7,9))
     }
 
     // ── HM LADLE (hangs from crane when stage=HM_CHARGE) ─────────────────
     if(stage==='HM_CHARGE'||stage==='BLOWING'||stage==='SUBLANCE'||stage==='SLAG_OUT'||stage==='TAPPING'){
       // After pouring, crane moves back LEFT with empty ladle
       const ladleParked = (sim.ladlePoured||stage!=='HM_CHARGE')
-      // Empty ladle parks at left side (crane moves away from vessel)
-      const LDX = ladleParked ? W*0.10 : CRANE_BX
-      const LDY = ladleParked ? H*0.32 : HOOK_Y+8
-      const LW=W*0.08, LH=H*0.14
-      const tiltAng = (!sim.ladlePoured && stage==='HM_CHARGE' && Math.abs(sim.craneX-VCX/W)<0.02) ? -Math.PI*0.50 : 0
+      // Empty ladle parks at far left after pouring
+      const LDX = ladleParked ? W*0.12 : CRANE_BX
+      const LDY = ladleParked ? H*0.28 : HOOK_Y+6
+      const LW=W*0.13, LH=H*0.20   // BIG ladle
+      // tiltAng kept for code compatibility (always 0 — no tilt)
+      const tiltAng = 0
 
       ctx.save(); ctx.translate(LDX, LDY+LH*0.5); ctx.rotate(tiltAng)
       // Ladle shell
@@ -421,34 +451,60 @@ function BOFCanvas({
       ctx.beginPath(); ctx.arc(LW/2+6,0,5,0,Math.PI*2); ctx.fill()
       ctx.restore()
 
-      // Rope (when being lifted)
+      // Ropes from hook to ladle (always shown when crane active)
       if(!ladleParked){
-        ctx.strokeStyle='#37474F'; ctx.lineWidth=1.5
-        ctx.beginPath(); ctx.moveTo(LDX-LW*0.1,HOOK_Y+8); ctx.lineTo(LDX-LW/2+4,LDY+LH*0.08); ctx.stroke()
-        ctx.beginPath(); ctx.moveTo(LDX+LW*0.1,HOOK_Y+8); ctx.lineTo(LDX+LW/2-4,LDY+LH*0.08); ctx.stroke()
+        ctx.strokeStyle='#546E7A'; ctx.lineWidth=2
+        ctx.beginPath(); ctx.moveTo(CRANE_BX-W*0.03,HOOK_Y+10); ctx.lineTo(LDX-LW/2+6,LDY+8); ctx.stroke()
+        ctx.beginPath(); ctx.moveTo(CRANE_BX+W*0.03,HOOK_Y+10); ctx.lineTo(LDX+LW/2-6,LDY+8); ctx.stroke()
       }
-      // Pour stream
-      if(tiltAng!==0&&sim.ladleLevel>0){
-        const streamX=LDX+LW*0.4, streamY=LDY+LH*0.5
-        const sg=ctx.createLinearGradient(streamX,streamY,VCX,BATH_Y)
-        sg.addColorStop(0,'rgba(255,100,0,0.92)'); sg.addColorStop(1,'rgba(255,70,0,0.45)')
-        ctx.strokeStyle=sg; ctx.lineWidth=clamp(sim.ladleLevel*12,4,14)
-        ctx.beginPath(); ctx.moveTo(streamX,streamY)
-        ctx.bezierCurveTo(streamX+20,streamY+30,VCX-10,BATH_Y-30,VCX,BATH_Y)
-        ctx.stroke()
-        // Splash at impact
-        const spGrd=ctx.createRadialGradient(VCX,BATH_Y,2,VCX,BATH_Y,28)
-        spGrd.addColorStop(0,'rgba(255,120,0,0.55)'); spGrd.addColorStop(1,'rgba(255,80,0,0)')
-        ctx.fillStyle=spGrd; ctx.fillRect(VCX-32,BATH_Y-18,64,36)
+      // Direct pour — ladle is over vessel mouth, stream falls straight down into BOF
+      const pouringNow = stage==='HM_CHARGE' && !sim.ladlePoured && Math.abs(sim.craneX - VCX/W) < 0.03 && sim.ladleLevel > 0
+      if(pouringNow){
+        const streamX = VCX   // pour centre = vessel mouth centre
+        const streamTop = LDY + LH*0.9  // bottom of ladle
+        const streamBot = BATH_Y        // into bath
+        const streamW = clamp(sim.ladleLevel * 20, 5, 22)
+        // Falling stream gradient
+        const sg = ctx.createLinearGradient(0, streamTop, 0, streamBot)
+        sg.addColorStop(0, `rgba(255,${100+Math.round(40*Math.sin(sim.t*5))},0,0.96)`)
+        sg.addColorStop(0.4, 'rgba(255,75,0,0.85)')
+        sg.addColorStop(0.85, 'rgba(230,50,0,0.65)')
+        sg.addColorStop(1, 'rgba(200,35,0,0.40)')
+        ctx.strokeStyle = sg
+        ctx.lineWidth = streamW
+        ctx.lineCap = 'round'
+        ctx.beginPath(); ctx.moveTo(streamX, streamTop); ctx.lineTo(streamX, streamBot)
+        ctx.stroke(); ctx.lineCap = 'butt'
+        // Slight sway (natural turbulence)
+        const sway = Math.sin(sim.t * 7) * 4
+        ctx.lineWidth = streamW * 0.4
+        ctx.strokeStyle = `rgba(255,180,50,${0.35 + 0.2*Math.sin(sim.t*6)})`
+        ctx.beginPath(); ctx.moveTo(streamX+sway, streamTop+8); ctx.lineTo(streamX+sway*0.3, streamBot-10); ctx.stroke()
+        // Splash glow at bath surface
+        const spGrd = ctx.createRadialGradient(streamX, streamBot, 2, streamX, streamBot, 55)
+        spGrd.addColorStop(0, `rgba(255,130,0,${0.65+0.25*Math.sin(sim.t*8)})`)
+        spGrd.addColorStop(0.5, 'rgba(255,80,0,0.30)')
+        spGrd.addColorStop(1, 'rgba(255,60,0,0)')
+        ctx.fillStyle = spGrd; ctx.beginPath(); ctx.arc(streamX, streamBot, 55, 0, Math.PI*2); ctx.fill()
+        // Glow at vessel mouth
+        const mgGrd = ctx.createRadialGradient(streamX, VT+8, 2, streamX, VT+8, 38)
+        mgGrd.addColorStop(0, 'rgba(255,140,0,0.40)'); mgGrd.addColorStop(1, 'rgba(255,80,0,0)')
+        ctx.fillStyle = mgGrd; ctx.beginPath(); ctx.arc(streamX, VT+8, 38, 0, Math.PI*2); ctx.fill()
+        // Load cell display — alongside crane bridge
+        const lcX = CRANE_BX + W*0.10
+        ctx.fillStyle='rgba(4,12,28,0.90)'; ctx.fillRect(lcX, CRANE_RAIL_Y+6, W*0.11, H*0.040)
+        ctx.strokeStyle='#1e3040'; ctx.lineWidth=0.8; ctx.strokeRect(lcX, CRANE_RAIL_Y+6, W*0.11, H*0.040)
+        lblB('LOAD CELL', lcX+W*0.055, CRANE_RAIL_Y+16, '#29B6F6', clamp(W*0.009,7,10))
+        lblB(`${(sim.ladleLevel*hmWeight).toFixed(1)} t`, lcX+W*0.055, CRANE_RAIL_Y+28, '#FF8F00', clamp(W*0.013,11,14))
       }
       // Ladle label
-      lblB('HOT METAL LADLE',LDX,LDY-8,'#FF7043',clamp(W*0.009,7,10))
-      lbl(`${(sim.ladleLevel*hmWeight).toFixed(1)}t  ${hmTemp}°C`,LDX,LDY+LH+14,sim.ladleLevel>0.05?'#FF8F00':'#546E7A',clamp(W*0.009,7,9))
-      lbl(`C:${hmC}% Si:${hmSi}%`,LDX,LDY+LH+24,'rgba(200,180,150,0.65)',clamp(W*0.008,6,8))
+      lblB('HOT METAL LADLE',LDX,LDY-12,'#FF7043',clamp(W*0.011,9,12))
+      lbl(`${(sim.ladleLevel*hmWeight).toFixed(1)}t  ${hmTemp}°C`,LDX,LDY+LH+16,sim.ladleLevel>0.05?'#FF8F00':'#546E7A',clamp(W*0.010,8,10))
+      lbl(`C:${hmC}%  Si:${hmSi}%  Mn:${hmMn}%`,LDX,LDY+LH+28,'rgba(200,180,150,0.72)',clamp(W*0.009,7,9))
     }
 
     // ── FLUX HOPPERS (above vessel, left side with conveyor chute) ──────
-    const FLUX_HX=[VCX-W*0.25, VCX-W*0.18]
+    const FLUX_HX=[VCX-W*0.30, VCX-W*0.22]
     const fluxOpen=stage==='FLUX_CHARGE'&&sim.fluxFalling
     FLUX_HX.forEach((hx,hi)=>{
       const HY2=H*0.08, HW2=W*0.055, HH2=H*0.11
@@ -492,12 +548,23 @@ function BOFCanvas({
     }); ctx.globalAlpha=1
 
     // ── BOF VESSEL SHELL ──────────────────────────────────────────────────
+    // ── VESSEL DRAWING (rotated around bottom pivot) ────────────────────
+    // Save state, rotate entire vessel around its bottom pivot
+    ctx.save()
+    ctx.translate(VPIVOT_X, VPIVOT_Y)
+    ctx.rotate(tiltRad)
+    ctx.translate(-VPIVOT_X, -VPIVOT_Y)
+
+    // Vessel vibration offset (small, horizontal only)
+    const vibX = sim.vesselVib * Math.cos(tiltRad)
+    const vibY = sim.vesselVib * Math.sin(tiltRad)
+
     const steps=60
     const leftPts=[], rightPts=[]
     for(let s=0;s<=steps;s++){
       const yf=s/steps, y=VT+yf*VH, hw=vHW(yf)
-      leftPts.push([VCX-hw, y+sim.vesselVib*0.25])
-      rightPts.push([VCX+hw, y+sim.vesselVib*0.25])
+      leftPts.push([VCX-hw+vibX, y+vibY])
+      rightPts.push([VCX+hw+vibX, y+vibY])
     }
     // Shell
     ctx.beginPath(); ctx.moveTo(...leftPts[0])
@@ -506,7 +573,7 @@ function BOFCanvas({
     ctx.closePath(); ctx.fillStyle='#1a2535'; ctx.fill()
     ctx.strokeStyle='#2c4055'; ctx.lineWidth=2.5; ctx.stroke()
 
-    // Clip interior
+    // Clip interior (refractory + bath + slag + scrap all inside this rotate)
     ctx.save()
     ctx.beginPath(); ctx.moveTo(...leftPts[0])
     leftPts.forEach(p=>ctx.lineTo(...p))
@@ -585,7 +652,8 @@ function BOFCanvas({
     // Ferro alloy particles
     sim.faParticles.forEach(p=>{ctx.globalAlpha=p.life*0.80;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
 
-    ctx.restore()
+    ctx.restore()  // restore interior clip
+    ctx.restore()  // restore vessel rotation
 
     // CO2 upper vessel
     sim.co2Gas.forEach(p=>{ctx.globalAlpha=p.life*0.46;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
@@ -593,12 +661,14 @@ function BOFCanvas({
     // Sparks
     sim.sparks.forEach(p=>{ctx.globalAlpha=p.life;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();ctx.globalAlpha=p.life*0.22;ctx.fillStyle='#FF8F00';ctx.beginPath();ctx.arc(p.x-p.vx*0.45,p.y-p.vy*0.45,p.r*0.35,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
 
-    // Vessel border overlay
-    ctx.beginPath(); leftPts.forEach((p,i)=>i===0?ctx.moveTo(...p):ctx.lineTo(...p)); ctx.strokeStyle='#2c4055'; ctx.lineWidth=2; ctx.stroke()
-    ctx.beginPath(); rightPts.forEach((p,i)=>i===0?ctx.moveTo(...p):ctx.lineTo(...p)); ctx.stroke()
+    // Vessel border overlay — drawn AFTER rotation is restored, so keep leftPts/rightPts coords
 
     // ── O2 LANCE ──────────────────────────────────────────────────────────
-    const LANCE_X=VCX+W*0.01, LANCE_TOP=VT-H*0.12
+    // Lance enters straight down into vessel mouth (mouth position rotated)
+    const lanceLocalX=VCX+W*0.005, lanceLocalY=VT-H*0.02
+    const dlx=lanceLocalX-VPIVOT_X, dly=lanceLocalY-VPIVOT_Y
+    const LANCE_X=tiltRad!==0?VPIVOT_X+dlx*Math.cos(tiltRad)-dly*Math.sin(tiltRad):lanceLocalX
+    const LANCE_TOP=VT-H*0.12
     const LANCE_DRAWN_BOT=stage==='BLOWING'?sim.lanceY:
                           stage==='SUBLANCE'||stage==='FERRO_ALLOY'?VT-H*0.04:
                           stage==='SLAG_OUT'||stage==='TAPPING'||stage==='COMPLETE'?LANCE_TOP:
@@ -659,12 +729,12 @@ function BOFCanvas({
       const HOOD_Y=VT-H*0.05
       ctx.fillStyle='#1a2535'; ctx.strokeStyle='#2c4055'; ctx.lineWidth=1.5
       ctx.beginPath()
-      ctx.moveTo(VCX-vHW(0)*0.78,HOOD_Y+H*0.04)
-      ctx.lineTo(VCX-W*0.05,HOOD_Y); ctx.lineTo(VCX-W*0.04,HOOD_Y-H*0.04)
-      ctx.lineTo(VCX+W*0.04,HOOD_Y-H*0.04); ctx.lineTo(VCX+W*0.05,HOOD_Y)
-      ctx.lineTo(VCX+vHW(0)*0.78,HOOD_Y+H*0.04); ctx.closePath(); ctx.fill(); ctx.stroke()
+      ctx.moveTo(VCXT-vHW(0)*0.78,HOOD_Y+H*0.04)
+      ctx.lineTo(VCXT-W*0.05,HOOD_Y); ctx.lineTo(VCXT-W*0.04,HOOD_Y-H*0.04)
+      ctx.lineTo(VCXT+W*0.04,HOOD_Y-H*0.04); ctx.lineTo(VCXT+W*0.05,HOOD_Y)
+      ctx.lineTo(VCXT+vHW(0)*0.78,HOOD_Y+H*0.04); ctx.closePath(); ctx.fill(); ctx.stroke()
       ctx.strokeStyle=running?`rgba(${130+Math.round(28*Math.sin(sim.t*2))},120,55,0.68)`:'#1a2535'; ctx.lineWidth=10
-      ctx.beginPath(); ctx.moveTo(VCX+W*0.04,HOOD_Y-H*0.04); ctx.bezierCurveTo(VCX+W*0.09,HOOD_Y-H*0.06,W*0.78,HOOD_Y-H*0.05,W*0.82,H*0.06); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(VCXT+W*0.04,HOOD_Y-H*0.04); ctx.bezierCurveTo(VCXT+W*0.09,HOOD_Y-H*0.06,W*0.78,HOOD_Y-H*0.05,W*0.82,H*0.06); ctx.stroke()
       lbl('OFF-GAS',W*0.80,H*0.04,'#9B8040',clamp(W*0.009,7,9))
       // Off-gas particles
       sim.offGasParticles.forEach(p=>{ctx.globalAlpha=p.life*0.40;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
@@ -784,13 +854,13 @@ function BOFCanvas({
 
     // ── GAS LABELS ──────────────────────────────────────────────────────────
     if(stage==='BLOWING'&&running&&blowPct>5){
-      lbl('CO↑',VCX+vHW(0.5)*0.55,BATH_Y-VH*0.22,'rgba(175,148,45,0.55)',clamp(W*0.010,8,10))
-      lbl('CO→CO₂',VCX+vHW(0.3)*0.45,VT+VH*0.17,'rgba(115,148,58,0.48)',clamp(W*0.009,7,9))
+      lbl('CO↑',VCXT+vHW(0.5)*0.55,BATH_Y-VH*0.22,'rgba(175,148,45,0.55)',clamp(W*0.010,8,10))
+      lbl('CO→CO₂',VCXT+vHW(0.3)*0.45,VT+VH*0.17,'rgba(115,148,58,0.48)',clamp(W*0.009,7,9))
     }
 
     // ── BLOW PROGRESS (only during BLOWING) ───────────────────────────────
     if(stage==='BLOWING'){
-      const BP_X=W*0.68,BP_Y=H*0.06,BP_W=W*0.27,BP_H=12
+      const BP_X=W*0.795,BP_Y=H*0.04,BP_W=W*0.195,BP_H=14
       ctx.fillStyle='#0d1520'; ctx.fillRect(BP_X,BP_Y,BP_W,BP_H)
       const bpC=blowPct>90?'#f85149':blowPct>70?'#FF8F00':'#1565C0'
       ctx.fillStyle=bpC; ctx.fillRect(BP_X,BP_Y,BP_W*(blowPct/100),BP_H)
@@ -799,10 +869,10 @@ function BOFCanvas({
     }
 
     // ── HUD ───────────────────────────────────────────────────────────────
-    const HX=W*0.68,HY=H*0.10,HW=W*0.27,RH=24
+    const HX=W*0.790,HY=H*0.07,HW=W*0.200,RH=33
     ctx.fillStyle='rgba(4,8,18,0.86)'; ctx.fillRect(HX-4,HY,HW+8,RH*14+12)
     ctx.strokeStyle='#1a3050'; ctx.lineWidth=0.8; ctx.strokeRect(HX-4,HY,HW+8,RH*14+12)
-    lblB('HEAT MONITOR',HX+HW/2,HY+14,'#3d6a8a',clamp(W*0.010,8,10))
+    lblB('HEAT MONITOR',HX+HW/2,HY+16,'#3d6a8a',clamp(W*0.015,13,17))
     const hudRows=[
       ['STAGE',         stageNames[stage]||stage,                    stageCol],
       ['BATH TEMP',     `${Math.round(sim.bathTemp)} °C`,            heatColor(sim.bathTemp,1380,1720)],
@@ -823,8 +893,8 @@ function BOFCanvas({
       const ry=HY+18+i*RH
       ctx.fillStyle='#0a1422'; ctx.fillRect(HX,ry,HW,RH-2)
       ctx.strokeStyle='#1a3050'; ctx.lineWidth=0.3; ctx.strokeRect(HX,ry,HW,RH-2)
-      ctx.fillStyle='#4d7a9a'; ctx.font=`${clamp(W*0.009,7,9)}px monospace`; ctx.textAlign='left'; ctx.fillText(l,HX+5,ry+10)
-      ctx.fillStyle=c; ctx.font=`bold ${clamp(W*0.010,8,10)}px monospace`; ctx.textAlign='right'; ctx.fillText(v.length>20?v.substring(0,18)+'…':v,HX+HW-4,ry+RH-5)
+      ctx.fillStyle='#4d7a9a'; ctx.font=`${clamp(W*0.012,10,13)}px monospace`; ctx.textAlign='left'; ctx.fillText(l,HX+5,ry+12)
+      ctx.fillStyle=c; ctx.font=`bold ${clamp(W*0.013,11,15)}px monospace`; ctx.textAlign='right'; ctx.fillText(v.length>16?v.substring(0,14)+'…':v,HX+HW-4,ry+RH-4)
     })
 
     // ── TOOLTIP ────────────────────────────────────────────────────────────
