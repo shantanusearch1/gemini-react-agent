@@ -83,7 +83,7 @@ const NAV_ITEMS = [
   { id: 'divider',        isDivider: true,       label: 'BOF Models',       roles: ['admin','steel'] },
   { id: 'bof_static',     icon: 'science',       label: 'BOF Static Charge',roles: ['admin','steel'] },
   { id: 'bof_td',         icon: 'monitor_heart', label: 'BOF TD Prediction',roles: ['admin','steel'] },
-  { id: 'bof_td',         icon: 'monitor_heart', label: 'BOF Visualization', roles: ['admin','steel'] },
+  { id: 'bof_visual',         icon: 'monitor_heart', label: 'BOF Visualization', roles: ['admin','steel'] },
   { id: 'divider2',       isDivider: true,       label: 'Casting Models',   roles: ['admin','steel'] },
   { id: 'slab_casting',   icon: 'view_stream',   label: 'Slab Casting',     roles: ['admin','steel'] },
   { id: 'billet_casting', icon: 'grid_on', label: 'Billet Casting', roles: ['admin','steel'] },
@@ -720,7 +720,7 @@ export default function App({ user, onLogout }) {
           )}
 
           {/* BOF Real-Time Visualization */}
-          {activeTab === 'bof_td' && (
+          {activeTab === 'bof_visual' && (
             <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
               <BOFVisualization />
             </div>
