@@ -23,14 +23,26 @@ function initLadle(idx) {
     slagThick: 80, slagFoam: 0.2,
     // Power
     arcOn: false, arcV: 0, arcA: 0, arcPhase: 0, heatRate: 0,
-    // Electrodes (3 per LF)
-    electrodeY: [0, 0, 0],  // 0=raised, 1=lowered
-    // Argon stirring
+    // Electrodes — 3 graphite rods, each with individual Y position (raised=0, lowered=1)
+    // During arcing: electrodes move up/down to regulate arc length (voltage control)
+    electrodeY: [0.2, 0.2, 0.2],   // 0=fully raised, 1=fully lowered into bath
+    electrodeVel: [0, 0, 0],         // velocity (positive=down, negative=up)
+    arcLength: [0, 0, 0],            // current arc length in mm per electrode
+    // Bottom porous plugs (2 per ladle)
+    plug1On: false, plug1Flow: 0, plug1Bubbles: [],
+    plug2On: false, plug2Flow: 0, plug2Bubbles: [],
+    // Argon stirring (combined from plugs)
     arStirOn: false, arFlow: 0, arBubbles: [],
     // Alloy addition
     alloyFalling: false, alloyParticles: [], alloyTimer: 0,
     // Wire injection
     wireOn: false, wireY: 0, wireParticles: [],
+    // Top lance (injection lance for powder / O2)
+    topLanceOn: false, topLanceY: 0, topLanceParticles: [],
+    // Temperature / Sampling probe
+    probeOn: false, probeY: 0, probeDone: false,
+    measuredTemp: null, sampleTaken: false,
+    probeFrames: 0,
     // Desulph
     desulphPct: 0,
     // Treatment time
@@ -117,6 +129,9 @@ function LFCanvas({
     const ELEC_TOP= H*0.06   // electrode top (raised)
     const ELEC_W  = W*0.010
 
+    // Lining thickness (shared constant used in ladle draw + tooltips)
+    const LIN = clamp(W*0.014, 10, 18)
+
     // Transformer room
     const TRANS_X = W*0.46
     const TRANS_Y = H*0.25
@@ -142,55 +157,91 @@ function LFCanvas({
           lc.steelTemp=clamp(lc.steelTemp+lc.heatRate*0.016, 1560, 1720)
           lc.energyKWh+=lc.powerKW*0.016/3600
           lc.arcPhase=(lc.arcPhase+0.35)%(Math.PI*2)
-          // Electrode positions (3 electrodes)
-          lc.electrodeY=lc.electrodeY.map((_,i)=>0.85+0.04*Math.sin(sim.t*8+i*2.1))
-          // Arc sparks
+
+          // ── REALISTIC ELECTRODE REGULATION ──────────────────────────────
+          // Each electrode regulated independently to maintain arc length
+          // Target arc length ~150mm; regulated by moving electrode up/down
+          const targetArcLen = 150 + voltageStep*8  // mm
+          lc.electrodeY = lc.electrodeY.map((ey,ei)=>{
+            // Simulate arc length fluctuation (bath turbulence)
+            const actualArc = targetArcLen*(0.92+0.16*Math.sin(sim.t*6+ei*2.1+(Math.random()-0.5)*0.5))
+            lc.arcLength[ei] = Math.round(actualArc)
+            // Regulate: if arc too long → lower electrode, if too short → raise
+            const err = actualArc - targetArcLen
+            const vel = clamp(err*0.003+lc.electrodeVel[ei]*0.7, -0.008, 0.008)
+            lc.electrodeVel[ei] = vel
+            return clamp(ey + vel, 0.55, 0.88)  // electrode always partially in vessel
+          })
+
+          // Arc sparks from all 3 electrode tips
           if(sim.frame%2===0){
-            const bathY=LAD_Y0+H*0.04
             ;[-1,0,1].forEach(i=>{
-              const ex=CX+i*LAD_W*0.18
-              const ey=LAD_Y0+H*0.03+lc.electrodeY[i+1]*H*0.15
-              for(let k=0;k<4;k++) lc.arcSparks.push({
-                x:ex+(Math.random()-0.5)*16, y:ey+(Math.random()-0.5)*8,
-                vx:(Math.random()-0.5)*7, vy:-Math.random()*5-1,
-                life:1, r:1+Math.random()*2.5,
-                col:Math.random()>0.4?'rgba(255,255,120,0.9)':'rgba(100,180,255,0.85)'
+              const ex=CX+i*LAD_W*0.22
+              const slagSurfY = LAD_Y0+H*0.055
+              const insideH2=(LAD_Y0+H*0.30)-(LAD_Y0+H*0.04)
+              const elecFrac2=lc.electrodeY[i+1]||0.68
+              const elecTipY  = (LAD_Y0+H*0.04)+insideH2*(elecFrac2-0.55)/0.35
+              const arcGapY   = elecTipY + (slagSurfY-elecTipY)*0.5
+              for(let k=0;k<5;k++) lc.arcSparks.push({
+                x:ex+(Math.random()-0.5)*20, y:arcGapY+(Math.random()-0.5)*12,
+                vx:(Math.random()-0.5)*9, vy:-Math.random()*6-0.5,
+                life:1, r:0.8+Math.random()*2.5,
+                col:Math.random()>0.35?'rgba(255,255,130,0.92)':'rgba(80,160,255,0.88)'
               })
             })
           }
-          // Slag foaming from arc
-          lc.slagFoam=clamp(lc.slagFoam+0.002, 0, 0.85)
+          // Slag foaming from arc stirring
+          lc.slagFoam=clamp(lc.slagFoam+0.002, 0, 0.88)
           if(sim.frame%5===0&&lc.slagFoam>0.3){
             ;[-1,1].forEach(side=>{
-              lc.slagSplash.push({x:CX+side*(LAD_W*0.35+Math.random()*LAD_W*0.15),y:LAD_Y0+H*0.02,vx:side*(1.5+Math.random()*3),vy:-2-Math.random()*3,life:1,r:2+Math.random()*3,col:heatColor(lc.steelTemp-30,1500,1700)})
+              lc.slagSplash.push({x:CX+side*(LAD_W*0.32+Math.random()*LAD_W*0.14),y:LAD_Y0+H*0.025,vx:side*(1.5+Math.random()*3),vy:-2.5-Math.random()*3.5,life:1,r:2+Math.random()*3.5,col:heatColor(lc.steelTemp-30,1500,1700)})
             })
           }
         } else {
-          lc.powerKW=0
-          lc.heatRate=0
-          lc.electrodeY=[0,0,0]
+          lc.powerKW=0; lc.heatRate=0
+          // Electrodes rise slowly when power off
+          lc.electrodeY=lc.electrodeY.map(ey=>Math.max(0.15, ey-0.005))
+          lc.arcLength=[0,0,0]
           lc.slagFoam=Math.max(0.05,lc.slagFoam-0.001)
           lc.arcPhase=0
         }
 
-        // Argon stirring
-        if(lc.arStirOn){
-          lc.arFlow=arFlowSet
-          if(sim.frame%3===0){
-            ;[-0.3,0,0.3].forEach(dx=>{
-              lc.arBubbles.push({
-                x:CX+dx*LAD_W*0.7+(Math.random()-0.5)*16,
-                y:LAD_Y1-12,
-                vx:(Math.random()-0.5)*1.8,
-                vy:-(1.2+Math.random()*2.5)*(lc.arFlow/300),
-                life:1, r:2+Math.random()*3.5,
-                col:`rgba(100,190,255,${0.45+Math.random()*0.25})`
-              })
+        // ── BOTTOM POROUS PLUG ARGON (2 plugs per ladle) ────────────────────
+        // Plug 1 (left side) and Plug 2 (right side)
+        lc.arFlow = (lc.plug1On?lc.plug1Flow:0) + (lc.plug2On?lc.plug2Flow:0)
+
+        if(lc.plug1On){
+          // Plug 1 at left — bubble plume rises on left side
+          if(sim.frame%2===0){
+            const plumeW = clamp(lc.plug1Flow/60, 0.5, 2.5)
+            for(let k=0;k<4;k++) lc.plug1Bubbles.push({
+              x: CX-LAD_W*0.28+(Math.random()-0.5)*LAD_W*0.06,
+              y: LAD_Y1-LIN,
+              vx: (Math.random()-0.5)*plumeW,
+              vy: -(1.2+Math.random()*3.5)*(lc.plug1Flow/180),
+              life:1, r:2.5+Math.random()*4.5,
+              col:`rgba(80,190,255,${0.55+Math.random()*0.30})`
             })
           }
-        } else {
-          lc.arFlow=0
+          // Argon stirs steel — slight temperature homogenisation
+          lc.steelTemp=clamp(lc.steelTemp+(1540+lc.steelTemp>1620?-0.001:0.001),1540,1720)
         }
+        if(lc.plug2On){
+          // Plug 2 at right
+          if(sim.frame%2===0){
+            const plumeW2=clamp(lc.plug2Flow/60,0.5,2.5)
+            for(let k=0;k<4;k++) lc.plug2Bubbles.push({
+              x: CX+LAD_W*0.28+(Math.random()-0.5)*LAD_W*0.06,
+              y: LAD_Y1-LIN,
+              vx: (Math.random()-0.5)*plumeW2,
+              vy: -(1.2+Math.random()*3.5)*(lc.plug2Flow/180),
+              life:1, r:2.5+Math.random()*4.5,
+              col:`rgba(100,210,255,${0.55+Math.random()*0.30})`
+            })
+          }
+        }
+        // Combined arBubbles for compat
+        lc.arStirOn = lc.plug1On||lc.plug2On
 
         // Alloy addition
         if(lc.alloyFalling){
@@ -218,6 +269,38 @@ function LFCanvas({
           }
         }
 
+        // ── TOP LANCE (powder injection / bottom stirring supplement) ──────
+        if(lc.topLanceOn){
+          lc.topLanceY=Math.min(H*0.25, lc.topLanceY+2.5)
+          if(sim.frame%3===0){
+            lc.topLanceParticles.push({
+              x:CX+LAD_W*0.28+(Math.random()-0.5)*8,
+              y:H*0.12+lc.topLanceY*0.35,
+              vy:2.5+Math.random()*3, life:1, r:1.5+Math.random()*2,
+              col:'rgba(200,180,80,0.72)'
+            })
+          }
+          if(lc.topLanceY>=H*0.24){
+            lc.topLanceOn=false; lc.topLanceY=0
+            lc.S=clamp(lc.S-0.002,0.001,0.030)
+          }
+        }
+
+        // ── TEMPERATURE + SAMPLING PROBE ────────────────────────────────
+        if(lc.probeOn&&!lc.probeDone){
+          lc.probeY=Math.min(LAD_Y0+H*0.12, lc.probeY+2.2)
+          lc.probeFrames++
+          if(lc.probeY>=LAD_Y0+H*0.10){
+            lc.probeDone=true
+            lc.measuredTemp=Math.round(lc.steelTemp-2+(Math.random()-0.5)*5)
+            lc.sampleTaken=true
+          }
+          // Probe frames counter — retract after measurement
+          if(lc.probeFrames>90){
+            lc.probeOn=false; lc.probeY=0; lc.probeFrames=0
+          }
+        }
+
         // Temperature check for status
         if(lc.steelTemp>=lc.targetTemp-2&&lc.arcOn){
           lc.arcOn=false
@@ -225,11 +308,14 @@ function LFCanvas({
         }
 
         // Advance particles
-        lc.arcSparks    =lc.arcSparks.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,vy:p.vy+0.25,life:p.life-0.06}))
-        lc.slagSplash   =lc.slagSplash.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,vy:p.vy+0.18,life:p.life-0.04}))
-        lc.arBubbles    =lc.arBubbles.filter(p=>p.life>0&&p.y>LAD_Y0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.012}))
-        lc.alloyParticles=lc.alloyParticles.filter(p=>p.life>0&&p.y<LAD_Y0+H*0.3).map(p=>({...p,y:p.y+p.vy,life:p.life-0.018}))
-        lc.wireParticles=lc.wireParticles.filter(p=>p.life>0&&p.y<LAD_Y1).map(p=>({...p,y:p.y+p.vy,life:p.life-0.022}))
+        lc.arcSparks       =lc.arcSparks.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,vy:p.vy+0.25,life:p.life-0.055}))
+        lc.slagSplash      =lc.slagSplash.filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,vy:p.vy+0.18,life:p.life-0.04}))
+        lc.arBubbles       =lc.arBubbles.filter(p=>p.life>0&&p.y>LAD_Y0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.012}))
+        lc.plug1Bubbles    =(lc.plug1Bubbles||[]).filter(p=>p.life>0&&p.y>LAD_Y0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.010}))
+        lc.plug2Bubbles    =(lc.plug2Bubbles||[]).filter(p=>p.life>0&&p.y>LAD_Y0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.010}))
+        lc.alloyParticles  =lc.alloyParticles.filter(p=>p.life>0&&p.y<LAD_Y0+H*0.3).map(p=>({...p,y:p.y+p.vy,life:p.life-0.018}))
+        lc.wireParticles   =lc.wireParticles.filter(p=>p.life>0&&p.y<LAD_Y1).map(p=>({...p,y:p.y+p.vy,life:p.life-0.022}))
+        lc.topLanceParticles=(lc.topLanceParticles||[]).filter(p=>p.life>0&&p.y<LAD_Y0+H*0.25).map(p=>({...p,y:p.y+p.vy,life:p.life-0.020}))
 
         return lc
       }))
@@ -291,36 +377,99 @@ function LFCanvas({
       const CX = idx===0 ? LF1_CX : LF2_CX
       const LW = LAD_W
 
-      // ── ELECTRODES (3 graphite rods) ─────────────────────────────────
+      // ── ELECTRODES (3 graphite rods with realistic arc column) ────────
       const elecXs=[CX-LW*0.22, CX, CX+LW*0.22]
       elecXs.forEach((ex,ei)=>{
-        const eyTop=ELEC_TOP+10
-        const eyBot=ROOF_Y+ld.electrodeY[ei]*H*0.18
-        // Electrode cable
+        const eyTop  = ELEC_TOP+12
+        // Electrode tip: position based on regulated electrodeY
+        // Electrode tip Y — inside the ladle, just above slag surface
+        // electrodeY[ei] = 0.55–0.88 means distance as fraction of space inside ladle
+        const elecFrac = ld.electrodeY ? ld.electrodeY[ei] : 0.68
+        // Electrode tip is INSIDE ladle — between just below roof and bath surface
+        const insideLadleH = (LAD_Y0+H*0.30) - (LAD_Y0+H*0.04)
+        const eyBot = (LAD_Y0+H*0.04) + insideLadleH*(elecFrac-0.55)/0.35
+        const slagSurfY = LAD_Y0+H*0.055   // slag surface inside ladle
+        const arcLen = ld.arcLength ? ld.arcLength[ei] : 0
+
+        // Electrode holder arm (horizontal) on mast
+        ctx.fillStyle='#263340'; ctx.strokeStyle='#37474F'; ctx.lineWidth=0.8
+        ctx.fillRect(ex-LW*0.06,eyTop-6,LW*0.12,10); ctx.strokeRect(ex-LW*0.06,eyTop-6,LW*0.12,10)
+        // Cable from arm down to roof level
         ctx.strokeStyle='#1a2535'; ctx.lineWidth=3
-        ctx.beginPath(); ctx.moveTo(ex,eyTop); ctx.lineTo(ex,eyTop+H*0.04); ctx.stroke()
-        // Electrode rod (graphite — dark with slight sheen)
-        const eGrd=ctx.createLinearGradient(ex-ELEC_W/2,0,ex+ELEC_W/2,0)
-        eGrd.addColorStop(0,'#1a1a1a'); eGrd.addColorStop(0.5,'#2c2c2c'); eGrd.addColorStop(1,'#1a1a1a')
-        ctx.fillStyle=eGrd; ctx.fillRect(ex-ELEC_W/2,eyTop+H*0.04,ELEC_W,eyBot-eyTop-H*0.04)
-        ctx.strokeStyle='#333'; ctx.lineWidth=0.5; ctx.strokeRect(ex-ELEC_W/2,eyTop+H*0.04,ELEC_W,eyBot-eyTop-H*0.04)
-        // Arc tip glow
+        ctx.beginPath(); ctx.moveTo(ex,eyTop+4); ctx.lineTo(ex,ROOF_Y-2); ctx.stroke()
+
+        // Graphite rod — from roof down to electrode tip (inside ladle)
+        const rodTop = ROOF_Y - 2
+        const rodW   = Math.max(ELEC_W, clamp(W*0.012, 8, 14))
+        const eGrd=ctx.createLinearGradient(ex-rodW/2,0,ex+rodW/2,0)
+        eGrd.addColorStop(0,'#111'); eGrd.addColorStop(0.4,'#2a2a2a'); eGrd.addColorStop(0.7,'#3a3a3a'); eGrd.addColorStop(1,'#111')
+        ctx.fillStyle=eGrd; ctx.fillRect(ex-rodW/2,rodTop,rodW,eyBot-rodTop)
+        ctx.strokeStyle='rgba(60,60,60,0.8)'; ctx.lineWidth=0.5; ctx.strokeRect(ex-rodW/2,rodTop,rodW,eyBot-rodTop)
+        // Graphite tip (rounded, glowing when arc on)
         if(ld.arcOn){
-          const ag=ctx.createRadialGradient(ex,eyBot,1,ex,eyBot,18+8*Math.sin(sim.t*12+ei*2))
-          ag.addColorStop(0,'rgba(100,200,255,0.95)'); ag.addColorStop(0.3,'rgba(200,220,255,0.65)'); ag.addColorStop(0.6,'rgba(255,160,0,0.40)'); ag.addColorStop(1,'rgba(255,80,0,0)')
-          ctx.fillStyle=ag; ctx.beginPath(); ctx.arc(ex,eyBot,24,0,Math.PI*2); ctx.fill()
-          // Arc column (electric discharge)
-          const arcH=LAD_Y0+H*0.035-eyBot
-          for(let ay=0;ay<arcH;ay+=4){
-            const sway=(Math.random()-0.5)*6+Math.sin(sim.t*15+ay*0.3)*4
-            const alpha=0.6+0.35*Math.sin(sim.t*18+ay*0.2)
-            ctx.fillStyle=`rgba(150,210,255,${alpha})`
-            ctx.fillRect(ex+sway-1.5,eyBot+ay,3,4)
-          }
+          ctx.fillStyle='rgba(20,20,20,0.9)'
+          ctx.beginPath(); ctx.moveTo(ex-rodW/2,eyBot); ctx.lineTo(ex,eyBot+rodW*0.6); ctx.lineTo(ex+rodW/2,eyBot); ctx.closePath(); ctx.fill()
         }
-        // Electrode label
-        if(ei===1) lbl(`E${idx+1}`,ex,eyTop-4,'#37474F',clamp(W*0.009,6,8))
+
+        // ── ARC COLUMN — bright visible plasma from electrode tip to slag ──
+        if(ld.arcOn){
+          const arcGap = Math.max(slagSurfY - eyBot, 10)
+          const flash  = 0.75 + 0.25*Math.sin(sim.t*22 + ei*2.1 + ld.arcPhase)
+          const segments = Math.ceil(arcGap/3)
+
+          // OUTER GLOW (wide, soft blue)
+          ctx.beginPath()
+          for(let seg=0;seg<=segments;seg++){
+            const y=eyBot+seg*(arcGap/segments)
+            const sw=(Math.sin(sim.t*18+seg*0.5+ei*1.8)*8+Math.cos(sim.t*14+seg*0.7+ei*2.3)*6)*flash
+            seg===0?ctx.moveTo(ex+sw,y):ctx.lineTo(ex+sw,y)
+          }
+          ctx.strokeStyle=`rgba(60,160,255,${0.38*flash})`; ctx.lineWidth=18; ctx.stroke()
+
+          // MIDDLE arc (blue-white)
+          ctx.beginPath()
+          for(let seg=0;seg<=segments;seg++){
+            const y=eyBot+seg*(arcGap/segments)
+            const sw=(Math.sin(sim.t*22+seg*0.45+ei*1.6)*5+Math.cos(sim.t*16+seg*0.6+ei*2.0)*4)*flash
+            seg===0?ctx.moveTo(ex+sw,y):ctx.lineTo(ex+sw,y)
+          }
+          ctx.strokeStyle=`rgba(140,210,255,${0.78*flash})`; ctx.lineWidth=5; ctx.stroke()
+
+          // CORE arc (bright white)
+          ctx.beginPath()
+          for(let seg=0;seg<=segments;seg++){
+            const y=eyBot+seg*(arcGap/segments)
+            const sw=(Math.sin(sim.t*28+seg*0.35+ei*1.4)*3)*flash
+            seg===0?ctx.moveTo(ex+sw,y):ctx.lineTo(ex+sw,y)
+          }
+          ctx.strokeStyle=`rgba(255,255,255,${0.92*flash})`; ctx.lineWidth=2; ctx.stroke()
+
+          // ELECTRODE TIP GLOW — bright white-blue corona
+          const tg=ctx.createRadialGradient(ex,eyBot,0,ex,eyBot,22)
+          tg.addColorStop(0,`rgba(255,255,255,${0.95*flash})`)
+          tg.addColorStop(0.3,`rgba(150,220,255,${0.80*flash})`)
+          tg.addColorStop(0.7,`rgba(80,160,255,${0.40*flash})`)
+          tg.addColorStop(1,'rgba(0,100,255,0)')
+          ctx.fillStyle=tg; ctx.beginPath(); ctx.arc(ex,eyBot,22,0,Math.PI*2); ctx.fill()
+
+          // IMPACT at slag — bright orange-yellow splash zone
+          const ig=ctx.createRadialGradient(ex,slagSurfY,0,ex,slagSurfY,36)
+          ig.addColorStop(0,`rgba(255,240,120,${0.80*flash})`)
+          ig.addColorStop(0.35,`rgba(255,140,0,${0.55*flash})`)
+          ig.addColorStop(0.7,`rgba(255,60,0,${0.25*flash})`)
+          ig.addColorStop(1,'rgba(255,30,0,0)')
+          ctx.fillStyle=ig; ctx.beginPath(); ctx.arc(ex,slagSurfY,36,0,Math.PI*2); ctx.fill()
+
+          // Arc length annotation
+          lbl(`${arcLen}mm`,ex+14,eyBot+(slagSurfY-eyBot)*0.5,'rgba(100,190,255,0.75)',clamp(W*0.009,7,9),'left')
+        }
+        // Electrode number
+        lbl(`E${ei+1}`,ex,rodTop-4,'rgba(80,100,120,0.55)',clamp(W*0.008,5,7))
       })
+      // Arc power label
+      if(ld.arcOn){
+        lblB(`${ld.powerKW}kW  ${ld.arcV}V  ${ld.arcA}A`,CX,ELEC_TOP-2,'#FF8F00',clamp(W*0.010,8,10))
+      }
 
       // ── ELECTRODE MAST / DELTA FRAME ─────────────────────────────────
       ctx.fillStyle='#1a2d3d'; ctx.strokeStyle='#2c4055'; ctx.lineWidth=1.2
@@ -357,8 +506,7 @@ function LFCanvas({
       ctx.lineTo(CX+LW/2+6,LAD_Y1)
       ctx.lineTo(CX+LW/2,LAD_Y0)
       ctx.closePath(); ctx.fill(); ctx.stroke()
-      // Refractory lining (inner)
-      const LIN=clamp(W*0.014,10,18)
+      // Refractory lining (inner) — LIN defined globally above
       ctx.fillStyle='#1e1408'
       ctx.beginPath()
       ctx.moveTo(CX-LW/2+LIN,LAD_Y0+4)
@@ -407,19 +555,70 @@ function LFCanvas({
         }
       }
 
-      // ── ARGON BUBBLES ─────────────────────────────────────────────────
-      ld.arBubbles.forEach(p=>{
-        ctx.globalAlpha=p.life*0.55; ctx.fillStyle=p.col
-        ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
-      }); ctx.globalAlpha=1
-      // Argon porous plug indicator at ladle bottom
-      if(ld.arStirOn&&running){
-        ;[-0.3,0,0.3].forEach(dx=>{
-          const px=CX+dx*LW*0.55, py=LAD_Y1-LIN-6
-          const ag=ctx.createRadialGradient(px,py,1,px,py,10*(ld.arFlow/300))
-          ag.addColorStop(0,'rgba(100,190,255,0.55)'); ag.addColorStop(1,'rgba(100,190,255,0)')
-          ctx.fillStyle=ag; ctx.beginPath(); ctx.arc(px,py,12,0,Math.PI*2); ctx.fill()
+      // ── POROUS PLUG 1 (left) + PLUG 2 (right) bubbles + indicators ───
+      const PLUG1_X = CX - LW*0.28
+      const PLUG2_X = CX + LW*0.28
+      const PLUG_Y  = LAD_Y1 - LIN + 4
+      ;[[PLUG1_X,ld.plug1On,ld.plug1Flow,'1'],[PLUG2_X,ld.plug2On,ld.plug2Flow,'2']].forEach(([px,on,flow,num])=>{
+        // Porous plug housing
+        ctx.fillStyle=on?'rgba(30,60,100,0.85)':'rgba(20,30,45,0.8)'
+        ctx.strokeStyle=on?'#29B6F6':'#1e3040'; ctx.lineWidth=1
+        ctx.beginPath(); ctx.ellipse(px,PLUG_Y,LW*0.055,H*0.014,0,0,Math.PI*2); ctx.fill(); ctx.stroke()
+        // Plug rings (porous structure)
+        ;[LW*0.025,LW*0.040].forEach(r=>{
+          ctx.strokeStyle=on?'rgba(41,182,246,0.35)':'rgba(30,50,70,0.4)'; ctx.lineWidth=1
+          ctx.beginPath(); ctx.ellipse(px,PLUG_Y,r,H*0.007,0,0,Math.PI*2); ctx.stroke()
         })
+        // Argon pipe below plug
+        ctx.strokeStyle='#1a2535'; ctx.lineWidth=4
+        ctx.beginPath(); ctx.moveTo(px,PLUG_Y+H*0.012); ctx.lineTo(px,H*0.95); ctx.stroke()
+        // Flow indicator on pipe
+        if(on){
+          const fgrd=ctx.createLinearGradient(0,H*0.94,0,PLUG_Y)
+          fgrd.addColorStop(0,'rgba(41,182,246,0.6)'); fgrd.addColorStop(1,'rgba(41,182,246,0.15)')
+          ctx.strokeStyle=fgrd; ctx.lineWidth=3
+          ctx.beginPath(); ctx.moveTo(px,H*0.94); ctx.lineTo(px,PLUG_Y+H*0.012); ctx.stroke()
+          // Glow at plug face
+          const pg=ctx.createRadialGradient(px,PLUG_Y,1,px,PLUG_Y,LW*0.065)
+          pg.addColorStop(0,`rgba(41,182,246,${0.45+0.2*Math.sin(sim.t*6+px)})`); pg.addColorStop(1,'rgba(41,182,246,0)')
+          ctx.fillStyle=pg; ctx.beginPath(); ctx.arc(px,PLUG_Y,LW*0.065,0,Math.PI*2); ctx.fill()
+        }
+        lbl(`P${num} ${on?flow+'l/m':'OFF'}`,px,PLUG_Y+H*0.030,on?'#29B6F6':'#1e3040',clamp(W*0.009,6,8))
+      })
+      // Bubble plumes (plug 1 + plug 2)
+      // Bubble plumes — bright white-blue, clearly visible in steel bath
+      ;(ld.plug1Bubbles||[]).forEach(p=>{
+        // Outer glow
+        ctx.globalAlpha=p.life*0.30; ctx.fillStyle='rgba(150,220,255,0.7)'
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r*2.5,0,Math.PI*2); ctx.fill()
+        // Core bubble
+        ctx.globalAlpha=p.life*0.85; ctx.fillStyle=p.col
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
+        ctx.globalAlpha=p.life*0.4; ctx.fillStyle='rgba(255,255,255,0.9)'
+        ctx.beginPath(); ctx.arc(p.x-p.r*0.3,p.y-p.r*0.3,p.r*0.35,0,Math.PI*2); ctx.fill()
+      }); ctx.globalAlpha=1
+      ;(ld.plug2Bubbles||[]).forEach(p=>{
+        ctx.globalAlpha=p.life*0.30; ctx.fillStyle='rgba(150,220,255,0.7)'
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r*2.5,0,Math.PI*2); ctx.fill()
+        ctx.globalAlpha=p.life*0.85; ctx.fillStyle=p.col
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
+        ctx.globalAlpha=p.life*0.4; ctx.fillStyle='rgba(255,255,255,0.9)'
+        ctx.beginPath(); ctx.arc(p.x-p.r*0.3,p.y-p.r*0.3,p.r*0.35,0,Math.PI*2); ctx.fill()
+      }); ctx.globalAlpha=1
+      // Plug 1 surface eye (where bubbles break surface)
+      if(ld.plug1On&&running){
+        const eyY=LAD_Y0+H*0.06
+        const eg1=ctx.createRadialGradient(PLUG1_X,eyY,1,PLUG1_X,eyY,18)
+        eg1.addColorStop(0,'rgba(100,200,255,0.45)'); eg1.addColorStop(1,'rgba(100,200,255,0)')
+        ctx.fillStyle=eg1; ctx.beginPath(); ctx.arc(PLUG1_X,eyY,18,0,Math.PI*2); ctx.fill()
+        lbl('P1',PLUG1_X,eyY-22,'rgba(41,182,246,0.6)',clamp(W*0.009,7,9))
+      }
+      if(ld.plug2On&&running){
+        const eyY=LAD_Y0+H*0.06
+        const eg2=ctx.createRadialGradient(PLUG2_X,eyY,1,PLUG2_X,eyY,18)
+        eg2.addColorStop(0,'rgba(80,190,255,0.45)'); eg2.addColorStop(1,'rgba(80,190,255,0)')
+        ctx.fillStyle=eg2; ctx.beginPath(); ctx.arc(PLUG2_X,eyY,18,0,Math.PI*2); ctx.fill()
+        lbl('P2',PLUG2_X,eyY-22,'rgba(79,195,247,0.6)',clamp(W*0.009,7,9))
       }
 
       // ── ARC SPARKS ────────────────────────────────────────────────────
@@ -443,8 +642,35 @@ function LFCanvas({
       ctx.fillStyle='#0d1520'; ctx.fillRect(hopX+hopW*0.35,hopY+hopH,hopW*0.3,H*0.03)
       lblB(`FA${idx+1}`,hopX+hopW/2,hopY-5,'#FFB300',clamp(W*0.009,7,9))
       lbl('ALLOY',hopX+hopW/2,hopY+hopH+H*0.04,'#37474F',clamp(W*0.009,6,8))
-      // Alloy falling
-      ld.alloyParticles.forEach(p=>{ctx.globalAlpha=p.life*0.82;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
+      // ── FERRO ALLOY FALLING — prominent golden shower into ladle ────
+      if(ld.alloyFalling){
+        // Draw chute from hopper to ladle mouth
+        const chuteX=hopX+hopW/2, chuteY=hopY+hopH
+        const chuteEndX=CX+LW*0.15, chuteEndY=ROOF_Y+4
+        ctx.strokeStyle='rgba(190,155,60,0.55)'; ctx.lineWidth=5
+        ctx.beginPath(); ctx.moveTo(chuteX,chuteY+H*0.03); ctx.lineTo(chuteEndX,chuteEndY); ctx.stroke()
+        // Stream label
+        lbl('FA →',chuteX+(chuteEndX-chuteX)*0.5,(chuteY+chuteEndY)/2-8,'#FFB300',clamp(W*0.009,7,9))
+      }
+      ld.alloyParticles.forEach(p=>{
+        // Glow around each alloy particle
+        ctx.globalAlpha=p.life*0.30; ctx.fillStyle='rgba(255,200,50,0.8)'
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r*2.2,0,Math.PI*2); ctx.fill()
+        // Core particle
+        ctx.globalAlpha=p.life*0.90; ctx.fillStyle=p.col
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
+        // Highlight
+        ctx.globalAlpha=p.life*0.5; ctx.fillStyle='rgba(255,240,150,0.8)'
+        ctx.beginPath(); ctx.arc(p.x-p.r*0.3,p.y-p.r*0.3,p.r*0.4,0,Math.PI*2); ctx.fill()
+      }); ctx.globalAlpha=1
+      // Impact splash in steel when particles hit bath
+      if(ld.alloyFalling&&running){
+        const splashX=CX+LW*0.1+(Math.random()-0.5)*LW*0.2
+        const splashY=LAD_Y0+H*0.06
+        const sg=ctx.createRadialGradient(splashX,splashY,0,splashX,splashY,12)
+        sg.addColorStop(0,'rgba(255,200,50,0.45)'); sg.addColorStop(1,'rgba(255,150,0,0)')
+        ctx.fillStyle=sg; ctx.beginPath(); ctx.arc(splashX,splashY,12,0,Math.PI*2); ctx.fill()
+      }
 
       // ── WIRE INJECTION MACHINE ────────────────────────────────────────
       const wireMX=CX-LW*0.55, wireMY=H*0.14
@@ -462,6 +688,55 @@ function LFCanvas({
         ctx.beginPath(); ctx.moveTo(wireMX,wireMY+H*0.060); ctx.lineTo(wireMX,wireMY+H*0.060+ld.wireY*0.5); ctx.stroke()
       }
       ld.wireParticles.forEach(p=>{ctx.globalAlpha=p.life*0.75;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
+
+      // ── TOP LANCE (right side, drops from above roof) ─────────────────
+      const LANCE_X = CX + LW*0.52, LANCE_TOP2 = H*0.10
+      ctx.fillStyle='#1e2d3d'; ctx.strokeStyle='#2c4055'; ctx.lineWidth=1
+      ctx.fillRect(LANCE_X-W*0.02,LANCE_TOP2-H*0.04,W*0.04,H*0.04)
+      ctx.strokeRect(LANCE_X-W*0.02,LANCE_TOP2-H*0.04,W*0.04,H*0.04)
+      lblB(`TL${idx+1}`,LANCE_X,LANCE_TOP2-H*0.052,'#8BC34A',clamp(W*0.009,7,9))
+      lbl('TOP LANCE',LANCE_X,LANCE_TOP2-H*0.038,'#37474F',clamp(W*0.009,6,8))
+      if(ld.topLanceOn){
+        const lanceDrawY = LANCE_TOP2 + ld.topLanceY*0.4
+        const lGrd=ctx.createLinearGradient(LANCE_X-4,0,LANCE_X+4,0)
+        lGrd.addColorStop(0,'#1a3a4a'); lGrd.addColorStop(0.5,'#29B6F6'); lGrd.addColorStop(1,'#1a3a4a')
+        ctx.fillStyle=lGrd; ctx.fillRect(LANCE_X-5,LANCE_TOP2,10,lanceDrawY-LANCE_TOP2)
+        // Powder spray at tip
+        const tipY=lanceDrawY
+        const pg2=ctx.createRadialGradient(LANCE_X,tipY,1,LANCE_X,tipY,18)
+        pg2.addColorStop(0,'rgba(200,180,80,0.65)'); pg2.addColorStop(1,'rgba(200,160,60,0)')
+        ctx.fillStyle=pg2; ctx.beginPath(); ctx.arc(LANCE_X,tipY,18,0,Math.PI*2); ctx.fill()
+      }
+      ;(ld.topLanceParticles||[]).forEach(p=>{ctx.globalAlpha=p.life*0.75;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()}); ctx.globalAlpha=1
+
+      // ── TEMPERATURE + SAMPLING PROBE ─────────────────────────────────
+      const PROBE_X = CX - LW*0.52, PROBE_TOP = H*0.10
+      // Probe machine
+      ctx.fillStyle='#1e2d3d'; ctx.strokeStyle='#2c4055'; ctx.lineWidth=1
+      ctx.fillRect(PROBE_X-W*0.018,PROBE_TOP-H*0.04,W*0.036,H*0.04); ctx.strokeRect(PROBE_X-W*0.018,PROBE_TOP-H*0.04,W*0.036,H*0.04)
+      lblB(`PR${idx+1}`,PROBE_X,PROBE_TOP-H*0.052,'#57ab5a',clamp(W*0.009,7,9))
+      lbl('T+S PROBE',PROBE_X,PROBE_TOP-H*0.038,'#37474F',clamp(W*0.009,6,8))
+      if(ld.probeOn){
+        const probeDrawY = PROBE_TOP + ld.probeY*0.5
+        ctx.strokeStyle='#263238'; ctx.lineWidth=2; ctx.fillStyle='#2c3e50'
+        ctx.fillRect(PROBE_X-3,PROBE_TOP,6,probeDrawY-PROBE_TOP)
+        ctx.strokeRect(PROBE_X-3,PROBE_TOP,6,probeDrawY-PROBE_TOP)
+        // Thermocouple tip
+        ctx.fillStyle='#FFB300'; ctx.beginPath(); ctx.arc(PROBE_X,probeDrawY,5,0,Math.PI*2); ctx.fill()
+        if(ld.probeDone){
+          // Flash when measurement taken
+          const pg3=ctx.createRadialGradient(PROBE_X,probeDrawY,1,PROBE_X,probeDrawY,18)
+          pg3.addColorStop(0,'rgba(87,171,90,0.65)'); pg3.addColorStop(1,'rgba(87,171,90,0)')
+          ctx.fillStyle=pg3; ctx.beginPath(); ctx.arc(PROBE_X,probeDrawY,18,0,Math.PI*2); ctx.fill()
+        }
+      }
+      // Show last measurement
+      if(ld.measuredTemp){
+        ctx.fillStyle='rgba(4,12,28,0.88)'; ctx.fillRect(PROBE_X-W*0.045,PROBE_TOP+H*0.01,W*0.09,H*0.050)
+        ctx.strokeStyle='#57ab5a'; ctx.lineWidth=0.8; ctx.strokeRect(PROBE_X-W*0.045,PROBE_TOP+H*0.01,W*0.09,H*0.050)
+        lblB(`${ld.measuredTemp}°C`,PROBE_X,PROBE_TOP+H*0.026,'#57ab5a',clamp(W*0.011,9,12))
+        lbl(ld.sampleTaken?'SAMPLE ✓':'TEMP ONLY',PROBE_X,PROBE_TOP+H*0.044,'#57ab5a',clamp(W*0.009,7,9))
+      }
 
       // ── LADLE DATA BOX ────────────────────────────────────────────────
       const dbX=CX-LW*0.55, dbY=LAD_Y1+H*0.025, dbW=LW*1.10, dbH=H*0.17
@@ -571,6 +846,45 @@ function LFCanvas({
       })
     })
 
+    // Hit: porous plugs
+    ladles.forEach((ld,idx)=>{
+      const CX=idx===0?LF1_CX:LF2_CX
+      const PLUG_Y2=LAD_Y1-LIN+4
+      ;[[CX-LAD_W*0.30,'1',ld.plug1On,ld.plug1Flow||0],[CX+LAD_W*0.30,'2',ld.plug2On,ld.plug2Flow||0]].forEach(([px,num,on,flow])=>{
+        if(!tooltip&&Math.abs(mx-px)<LAD_W*0.07&&Math.abs(my-PLUG_Y2)<H*0.04){
+          tooltip={title:`LF${idx+1} — POROUS PLUG ${num}`,color:'#29B6F6',lines:[
+            {label:'Status',value:on?`OPEN — ${flow} l/min`:'CLOSED',col:on?'#29B6F6':'#546E7A'},
+            {label:'Type',value:'Al₂O₃-MgO porous plug',col:'rgba(180,200,210,0.9)'},
+            {label:'Function',value:'Bottom argon stirring',col:'rgba(180,200,210,0.9)'},
+            {label:'Effect',value:'Homogenises temp + chemistry',col:'#A5D6A7'},
+            {label:'Also',value:'Promotes inclusion flotation',col:'#A5D6A7'},
+            {label:'Both plugs',value:ld.plug1On&&ld.plug2On?'OPEN — max stirring':ld.plug1On||ld.plug2On?'ONE OPEN':'BOTH CLOSED',col:'#29B6F6'},
+          ]}
+        }
+      })
+      // Hit: probe
+      const PROBE_X2=CX-LAD_W*0.52
+      if(!tooltip&&Math.abs(mx-PROBE_X2)<W*0.025&&my>H*0.06&&my<LAD_Y0){
+        tooltip={title:`LF${idx+1} — TEMP/SAMPLE PROBE`,color:'#57ab5a',lines:[
+          {label:'Status',value:ld.probeOn?'MEASURING':ld.measuredTemp?'DONE':'STANDBY',col:'#57ab5a'},
+          {label:'Last temp',value:ld.measuredTemp?`${ld.measuredTemp} °C`:'No reading',col:ld.measuredTemp?'#57ab5a':'#546E7A'},
+          {label:'Sample',value:ld.sampleTaken?'TAKEN ✓':'Not taken',col:ld.sampleTaken?'#57ab5a':'#546E7A'},
+          {label:'Sensor',value:'Disposable thermocouple (S-type)',col:'rgba(180,200,210,0.9)'},
+          {label:'Accuracy',value:'±3°C bath temperature',col:'rgba(180,200,210,0.9)'},
+        ]}
+      }
+      // Hit: top lance
+      const LANCE_X2=CX+LAD_W*0.52
+      if(!tooltip&&Math.abs(mx-LANCE_X2)<W*0.025&&my>H*0.06&&my<LAD_Y0){
+        tooltip={title:`LF${idx+1} — TOP LANCE`,color:'#8BC34A',lines:[
+          {label:'Status',value:ld.topLanceOn?'INJECTING':'STANDBY',col:ld.topLanceOn?'#8BC34A':'#546E7A'},
+          {label:'Purpose',value:'CaSi powder injection',col:'rgba(180,200,210,0.9)'},
+          {label:'Effect',value:'Desulphurisation + inclusion mod',col:'#A5D6A7'},
+          {label:'Also used for',value:'Reheating slag / deoxidation',col:'rgba(180,200,210,0.9)'},
+        ]}
+      }
+    })
+
     // Hit: transformer
     if(!tooltip&&mx>TRANS_X&&mx<TRANS_X+TRANS_W&&my>TRANS_Y&&my<TRANS_Y+TRANS_H){
       tooltip={title:'FURNACE TRANSFORMER',color:'#FF7043',lines:[
@@ -641,20 +955,21 @@ function LadleControl({ladle,idx,onChange}){
       {label}
     </button>
   )
+  const arOn = ladle.plug1On||ladle.plug2On
   return(
-    <div style={{background:'#0a1018',border:`1px solid ${ladle.arcOn?'#FF8F0055':ladle.arStirOn?'#29B6F655':'#1a2d45'}`,borderRadius:5,padding:'8px',marginBottom:10}}>
+    <div style={{background:'#0a1018',border:`1px solid ${ladle.arcOn?'#FF8F0055':arOn?'#29B6F655':'#1a2d45'}`,borderRadius:5,padding:'8px',marginBottom:10}}>
       <div style={{fontSize:10,color:'#FF8F00',fontWeight:700,marginBottom:6,display:'flex',justifyContent:'space-between'}}>
         <span>LF{idx+1}</span>
         <span style={{fontSize:9,color:'#546E7A'}}>{ladle.status}</span>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginBottom:6}}>
         {[
-          {l:'Temp',v:`${Math.round(ladle.steelTemp)}°C`,c:'#FF8F00'},
-          {l:'Target',v:`${ladle.targetTemp}°C`,c:'#57ab5a'},
-          {l:'[C]',v:`${ladle.C.toFixed(3)}%`,c:'#29B6F6'},
-          {l:'[S]',v:`${ladle.S.toFixed(4)}%`,c:'#9b5de5'},
-          {l:'Power',v:`${ladle.powerKW}kW`,c:'#FF7043'},
-          {l:'Ar',v:`${ladle.arFlow}l/m`,c:'#29B6F6'},
+          {l:'Temp',   v:`${Math.round(ladle.steelTemp)}°C`, c:'#FF8F00'},
+          {l:'Target', v:`${ladle.targetTemp}°C`,            c:'#57ab5a'},
+          {l:'[C]',    v:`${ladle.C.toFixed(3)}%`,           c:'#29B6F6'},
+          {l:'[S]',    v:`${ladle.S.toFixed(4)}%`,           c:'#9b5de5'},
+          {l:'Power',  v:`${ladle.powerKW}kW`,               c:'#FF7043'},
+          {l:'Ar l/m', v:`${ladle.arFlow}`,                  c:'#29B6F6'},
         ].map(r=>(
           <div key={r.l} style={{background:'#06090f',borderRadius:3,padding:'3px 5px'}}>
             <div style={{fontSize:7,color:C2.muted}}>{r.l}</div>
@@ -662,10 +977,54 @@ function LadleControl({ladle,idx,onChange}){
           </div>
         ))}
       </div>
+
+      {/* Arc */}
       {btn(`${ladle.arcOn?'⏹ ARC OFF':'⚡ ARC ON'}`, '#FF8F00', ladle.arcOn, ()=>onChange(idx,'arcOn',!ladle.arcOn))}
-      {btn(`${ladle.arStirOn?'⏹ AR OFF':'💨 ARGON ON'}`, '#29B6F6', ladle.arStirOn, ()=>onChange(idx,'arStirOn',!ladle.arStirOn))}
-      {btn(`${ladle.alloyFalling?'⏳ ADDING...':'🧪 ALLOY ADD'}`, '#FFB300', ladle.alloyFalling, ()=>{if(!ladle.alloyFalling)onChange(idx,'alloyFalling',true)})}
-      {btn(`${ladle.wireOn?'⏳ INJECTING...':'🔩 Ca WIRE'}`, '#FFD54F', ladle.wireOn, ()=>{if(!ladle.wireOn)onChange(idx,'wireOn',true)})}
+      {ladle.arcOn&&<div style={{fontSize:8,color:'#FF8F00',marginBottom:4,paddingLeft:4}}>
+        E1:{ladle.arcLength?.[0]||0}mm  E2:{ladle.arcLength?.[1]||0}mm  E3:{ladle.arcLength?.[2]||0}mm
+      </div>}
+
+      {/* Porous plugs */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginBottom:4}}>
+        {[['PLUG 1','#29B6F6',ladle.plug1On,'plug1On'],[' PLUG 2','#4FC3F7',ladle.plug2On,'plug2On']].map(([label,col,active,key])=>(
+          <button key={key} onClick={()=>onChange(idx,key,!active)}
+            style={{padding:'5px 4px',borderRadius:3,border:`1px solid ${active?col:'#1a2d45'}`,background:active?col+'22':'transparent',color:active?col:'#6e8098',fontSize:9,cursor:'pointer',fontFamily:'monospace',fontWeight:700}}>
+            💨 {label}
+          </button>
+        ))}
+      </div>
+      {/* Plug flow sliders */}
+      {ladle.plug1On&&<div style={{marginBottom:4}}>
+        <div style={{display:'flex',justifyContent:'space-between',fontSize:8,color:'#29B6F6',marginBottom:2}}><span>PLUG 1 FLOW</span><span>{ladle.plug1Flow} l/m</span></div>
+        <input type="range" min={50} max={400} step={10} value={ladle.plug1Flow||150}
+          onChange={e=>onChange(idx,'plug1Flow',+e.target.value)}
+          style={{width:'100%',accentColor:'#29B6F6',height:16}}/>
+      </div>}
+      {ladle.plug2On&&<div style={{marginBottom:4}}>
+        <div style={{display:'flex',justifyContent:'space-between',fontSize:8,color:'#4FC3F7',marginBottom:2}}><span>PLUG 2 FLOW</span><span>{ladle.plug2Flow} l/m</span></div>
+        <input type="range" min={50} max={400} step={10} value={ladle.plug2Flow||150}
+          onChange={e=>onChange(idx,'plug2Flow',+e.target.value)}
+          style={{width:'100%',accentColor:'#4FC3F7',height:16}}/>
+      </div>}
+
+      {/* Top lance + Ca wire */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginBottom:4}}>
+        {btn(`${ladle.topLanceOn?'⏳ LANCE...':'🔧 TOP LANCE'}`, '#8BC34A', ladle.topLanceOn, ()=>{if(!ladle.topLanceOn)onChange(idx,'topLanceOn',true)})}
+        {btn(`${ladle.wireOn?'⏳ WIRE...':'🔩 Ca WIRE'}`, '#FFD54F', ladle.wireOn, ()=>{if(!ladle.wireOn)onChange(idx,'wireOn',true)})}
+      </div>
+
+      {/* Alloy + probe */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginBottom:4}}>
+        {btn(`${ladle.alloyFalling?'⏳ FA...':'🧪 ALLOY'}`, '#FFB300', ladle.alloyFalling, ()=>{if(!ladle.alloyFalling)onChange(idx,'alloyFalling',true)})}
+        {btn(`${ladle.probeOn?'⏳ PROBE...':'🌡 T+SAMPLE'}`, '#57ab5a', ladle.probeOn||ladle.probeDone, ()=>{if(!ladle.probeOn){onChange(idx,'probeOn',true);onChange(idx,'probeDone',false);onChange(idx,'probeY',0);onChange(idx,'probeFrames',0);onChange(idx,'measuredTemp',null)}})}
+      </div>
+
+      {/* Last probe reading */}
+      {ladle.measuredTemp&&<div style={{background:'rgba(87,171,90,0.12)',border:'1px solid #57ab5a55',borderRadius:3,padding:'4px 6px',marginBottom:4}}>
+        <div style={{fontSize:9,color:'#57ab5a',fontWeight:700}}>LAST MEASUREMENT</div>
+        <div style={{fontSize:11,color:'#57ab5a',fontWeight:700}}>{ladle.measuredTemp}°C  {ladle.sampleTaken?'+ SAMPLE ✓':''}</div>
+      </div>}
+
       <div style={{marginTop:4}}>
         <div style={{fontSize:9,color:C2.muted,marginBottom:3}}>TARGET TEMP</div>
         <input type="range" min={1600} max={1720} step={5} value={ladle.targetTemp}
