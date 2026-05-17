@@ -7,7 +7,7 @@ import IronMakingModel from './IronMakingModel.jsx'
 import CokePlantModel from './Cokeplantmodel.jsx'
 import BOFVisualization from './BOFVisualization.jsx'
 import SinterPlantModel from './SinterPlantModel.jsx'
-import LadleFurnaceModel from './LadleFurnaceModel.jsx'
+import LadleFurnaceModel from './Ladlefurnacemodel.jsx'
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
