@@ -1,5 +1,198 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 
+// ─── SOUND ENGINE (Web Audio API — no external files) ─────────────────────────
+class SoundEngine {
+  constructor() {
+    this.ctx = null
+    this.active = {}
+    this.enabled = true
+  }
+  _init() {
+    if (!this.ctx) {
+      try { this.ctx = new (window.AudioContext || window.webkitAudioContext)() } catch(e) {}
+    }
+    if (this.ctx?.state === 'suspended') this.ctx.resume()
+    return this.ctx
+  }
+
+  // Continuous hissing noise (argon purge)
+  startPurge(id, flow = 200) {
+    if (!this.enabled || this.active[id]) return
+    const ctx = this._init(); if (!ctx) return
+    const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate)
+    const data = buf.getChannelData(0)
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.4
+    const src = ctx.createBufferSource()
+    src.buffer = buf; src.loop = true
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.frequency.value = 400 + flow * 0.8
+    filter.Q.value = 0.8
+    const gain = ctx.createGain()
+    gain.gain.value = Math.min(0.28, 0.08 + flow / 1200)
+    src.connect(filter); filter.connect(gain); gain.connect(ctx.destination)
+    src.start()
+    this.active[id] = { src, gain, filter }
+  }
+  stopPurge(id) {
+    const n = this.active[id]; if (!n) return
+    try { n.gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.3); setTimeout(() => { try { n.src.stop() } catch(e) {} }, 500) } catch(e) {}
+    delete this.active[id]
+  }
+  updatePurge(id, flow) {
+    const n = this.active[id]; if (!n || !this.ctx) return
+    n.filter.frequency.setTargetAtTime(400 + flow * 0.8, this.ctx.currentTime, 0.5)
+    n.gain.gain.setTargetAtTime(Math.min(0.28, 0.08 + flow / 1200), this.ctx.currentTime, 0.5)
+  }
+
+  // Electric arc hum + crackle
+  startArc(id, kw = 20000) {
+    if (!this.enabled || this.active[id]) return
+    const ctx = this._init(); if (!ctx) return
+    const masterGain = ctx.createGain()
+    masterGain.gain.value = 0.0
+    masterGain.connect(ctx.destination)
+
+    // Low frequency hum (transformer)
+    const osc1 = ctx.createOscillator()
+    osc1.type = 'sawtooth'; osc1.frequency.value = 50
+    const humGain = ctx.createGain(); humGain.gain.value = 0.18
+    osc1.connect(humGain); humGain.connect(masterGain)
+
+    // Mid hum harmonic
+    const osc2 = ctx.createOscillator()
+    osc2.type = 'square'; osc2.frequency.value = 150
+    const hum2Gain = ctx.createGain(); hum2Gain.gain.value = 0.10
+    osc2.connect(hum2Gain); hum2Gain.connect(masterGain)
+
+    // Crackling noise (arc discharge)
+    const bufLen = ctx.sampleRate * 2
+    const noiseBuf = ctx.createBuffer(1, bufLen, ctx.sampleRate)
+    const nd = noiseBuf.getChannelData(0)
+    for (let i = 0; i < bufLen; i++) {
+      nd[i] = Math.random() < 0.05 ? (Math.random() * 2 - 1) * 3 : (Math.random() * 2 - 1) * 0.1
+    }
+    const noiseSrc = ctx.createBufferSource()
+    noiseSrc.buffer = noiseBuf; noiseSrc.loop = true
+    const crackFilter = ctx.createBiquadFilter()
+    crackFilter.type = 'highpass'; crackFilter.frequency.value = 1200
+    const crackGain = ctx.createGain(); crackGain.gain.value = 0.15
+    noiseSrc.connect(crackFilter); crackFilter.connect(crackGain); crackGain.connect(masterGain)
+
+    osc1.start(); osc2.start(); noiseSrc.start()
+    masterGain.gain.setTargetAtTime(1, ctx.currentTime, 0.5)
+    this.active[id] = { osc1, osc2, noiseSrc, masterGain }
+  }
+  stopArc(id) {
+    const n = this.active[id]; if (!n || !this.ctx) return
+    try {
+      n.masterGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.8)
+      setTimeout(() => { try { n.osc1.stop(); n.osc2.stop(); n.noiseSrc.stop() } catch(e) {} }, 1500)
+    } catch(e) {}
+    delete this.active[id]
+  }
+
+  // Short burst sound (alloy drop, wire, lance)
+  playBurst(type = 'alloy') {
+    if (!this.enabled) return
+    const ctx = this._init(); if (!ctx) return
+    const gain = ctx.createGain()
+    gain.connect(ctx.destination)
+    if (type === 'alloy') {
+      // Metallic clanking thud
+      ;[0, 0.08, 0.18, 0.30].forEach((delay, i) => {
+        const osc = ctx.createOscillator()
+        osc.type = 'triangle'
+        osc.frequency.value = 180 - i * 35
+        const g = ctx.createGain()
+        g.gain.setValueAtTime(0.35 - i * 0.06, ctx.currentTime + delay)
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.18)
+        osc.connect(g); g.connect(ctx.destination)
+        osc.start(ctx.currentTime + delay)
+        osc.stop(ctx.currentTime + delay + 0.20)
+      })
+      // Splash sound
+      const nbuf = ctx.createBuffer(1, ctx.sampleRate * 0.6, ctx.sampleRate)
+      const nd = nbuf.getChannelData(0)
+      for (let i = 0; i < nd.length; i++) nd[i] = (Math.random() * 2 - 1)
+      const ns = ctx.createBufferSource(); ns.buffer = nbuf
+      const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 600; nf.Q.value = 1.5
+      const ng = ctx.createGain(); ng.gain.setValueAtTime(0.22, ctx.currentTime + 0.05); ng.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.65)
+      ns.connect(nf); nf.connect(ng); ng.connect(ctx.destination); ns.start(ctx.currentTime + 0.05)
+
+    } else if (type === 'wire') {
+      // High-pitched whirring + small pops
+      const osc = ctx.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = 1800
+      osc.frequency.setTargetAtTime(1200, ctx.currentTime, 0.3)
+      const g = ctx.createGain(); g.gain.setValueAtTime(0.15, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 2.5)
+      osc.connect(g); g.connect(ctx.destination); osc.start(); osc.stop(ctx.currentTime + 2.5)
+      // Wire feed mechanical clicks
+      ;[0.1, 0.3, 0.5, 0.7, 0.9, 1.1, 1.4, 1.7, 2.0, 2.3].forEach(t => {
+        const o2 = ctx.createOscillator(); o2.type = 'square'; o2.frequency.value = 800
+        const g2 = ctx.createGain(); g2.gain.setValueAtTime(0.08, ctx.currentTime + t); g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.04)
+        o2.connect(g2); g2.connect(ctx.destination); o2.start(ctx.currentTime + t); o2.stop(ctx.currentTime + t + 0.05)
+      })
+
+    } else if (type === 'lance') {
+      // Pneumatic hiss + thud of lance entering
+      const nbuf = ctx.createBuffer(1, ctx.sampleRate * 1.5, ctx.sampleRate)
+      const nd = nbuf.getChannelData(0)
+      for (let i = 0; i < nd.length; i++) nd[i] = (Math.random() * 2 - 1)
+      const ns = ctx.createBufferSource(); ns.buffer = nbuf
+      const nf = ctx.createBiquadFilter(); nf.type = 'highpass'; nf.frequency.value = 2000
+      const ng = ctx.createGain(); ng.gain.setValueAtTime(0.25, ctx.currentTime); ng.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5)
+      ns.connect(nf); nf.connect(ng); ng.connect(ctx.destination); ns.start()
+      // Thud on entry
+      const osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = 80
+      const g = ctx.createGain(); g.gain.setValueAtTime(0.5, ctx.currentTime + 0.3); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.7)
+      osc.connect(g); g.connect(ctx.destination); osc.start(ctx.currentTime + 0.3); osc.stop(ctx.currentTime + 0.7)
+
+    } else if (type === 'probe') {
+      // Mechanical insertion beep + thud
+      ;[0, 0.15].forEach((t, i) => {
+        const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = 880 - i * 220
+        const g = ctx.createGain(); g.gain.setValueAtTime(0.18, ctx.currentTime + t); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.12)
+        o.connect(g); g.connect(ctx.destination); o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.14)
+      })
+      // Confirmation beep on measurement
+      setTimeout(() => {
+        if (!ctx) return
+        const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = 1200
+        const g = ctx.createGain(); g.gain.setValueAtTime(0.20, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15)
+        o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + 0.16)
+      }, 3000)
+
+    } else if (type === 'complete') {
+      // Success chord
+      ;[[523, 0], [659, 0.1], [784, 0.2], [1047, 0.35]].forEach(([freq, t]) => {
+        const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = freq
+        const g = ctx.createGain(); g.gain.setValueAtTime(0.18, ctx.currentTime + t); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.8)
+        o.connect(g); g.connect(ctx.destination); o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.85)
+      })
+    }
+  }
+
+  stopAll() {
+    Object.keys(this.active).forEach(id => {
+      const n = this.active[id]
+      try {
+        if (n.masterGain) n.masterGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.2)
+        if (n.gain) n.gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.2)
+        setTimeout(() => {
+          try { if (n.src) n.src.stop() } catch(e) {}
+          try { if (n.osc1) n.osc1.stop() } catch(e) {}
+          try { if (n.osc2) n.osc2.stop() } catch(e) {}
+          try { if (n.noiseSrc) n.noiseSrc.stop() } catch(e) {}
+        }, 400)
+      } catch(e) {}
+    })
+    this.active = {}
+  }
+}
+
+// Singleton
+const SOUND = new SoundEngine()
+
 // ─── GRADE LIBRARY ────────────────────────────────────────────────────────────
 const GRADES = {
   'SAE 1006':     { C:0.04, Mn:0.28, Si:0.02,  S:0.010, P:0.010, Al:0.035, targetT:1558, SH:22, liqT:1536 },
@@ -399,6 +592,7 @@ export default function AILFModel() {
   const [schedule, setSchedule] = useState(null)
   const [simState, setSimState] = useState(null)
   const [simRun,   setSimRun]   = useState(false)
+  const [soundOn,  setSoundOn]  = useState(true)
   const [elapsed,  setElapsed]  = useState(0)
   const [stepIdx,  setStepIdx]  = useState(0)
   const [CW,setCW] = useState(800)
@@ -424,6 +618,7 @@ export default function AILFModel() {
   const applyGrade = name => { setGrade(name) }
 
   const generateSchedule = () => {
+    SOUND.stopAll()
     const tgt = { T:g.targetT, SH:g.SH, C:g.C, Mn:g.Mn, Si:g.Si, S:g.S, P:g.P||0.015, Al:g.Al }
     const bof = { T:bofT, C:bofC, Mn:bofMn, Si:bofSi, S:bofS, P:bofP, Al:bofAl }
     const cfg = { weight:heatWt, transMVA, slagBasicity:slagB, voltageStep:voltStp, liqT:g.liqT||1540, castRoute:castR }
@@ -449,11 +644,11 @@ export default function AILFModel() {
       const step=sched.timeline[stepRef.current]
       if(minNow<step.tMin)break
       const ld=sim.ladles[0]
-      if(step.type==='arc'){const a=sched.arcSteps[step.idx];ld.arcOn=true;ld.status=a?.name||'ARCING';ld.arcEndMin=minNow+(a?.min||6)}
-      if(step.type==='purge'){const p=sched.purgeSteps[step.idx];ld.p1On=true;ld.p1Flow=p?.p1||200;ld.p2On=true;ld.p2Flow=p?.p2||180;ld.status=p?.name||'PURGING';ld.purgeEndMin=minNow+(p?.min||5)}
-      if(step.type==='alloy'){ld.status='ALLOY: '+(sched.alloys[step.idx]?.name||'');ld.alloyAddMin=minNow}
-      if(step.type==='wire'){ld.lanceY=0.01;ld.lanceTimer=0;ld.status='WIRE: '+(sched.wires[step.idx]?.type||'CaSi')}
-      if(step.type==='probe'){ld.probeY=0.01;ld.probeDone=false;ld.probeFrames=0;ld.status='TEMP MEAS.'}
+      if(step.type==='arc'){const a=sched.arcSteps[step.idx];ld.arcOn=true;ld.status=a?.name||'ARCING';ld.arcEndMin=minNow+(a?.min||6);SOUND.startArc('lf1_arc',transMVA*920)}
+      if(step.type==='purge'){const p=sched.purgeSteps[step.idx];ld.p1On=true;ld.p1Flow=p?.p1||200;ld.p2On=true;ld.p2Flow=p?.p2||180;ld.status=p?.name||'PURGING';ld.purgeEndMin=minNow+(p?.min||5);SOUND.startPurge('lf1_p1',p?.p1||200);SOUND.startPurge('lf1_p2',p?.p2||180)}
+      if(step.type==='alloy'){ld.status='ALLOY: '+(sched.alloys[step.idx]?.name||'');ld.alloyAddMin=minNow;SOUND.playBurst('alloy')}
+      if(step.type==='wire'){ld.lanceY=0.01;ld.lanceTimer=0;ld.status='WIRE: '+(sched.wires[step.idx]?.type||'CaSi');SOUND.playBurst('lance');setTimeout(()=>SOUND.playBurst('wire'),800)}
+      if(step.type==='probe'){ld.probeY=0.01;ld.probeDone=false;ld.probeFrames=0;ld.status='TEMP MEAS.';SOUND.playBurst('probe')}
       stepRef.current++; setStepIdx(stepRef.current)
     }
 
@@ -465,7 +660,7 @@ export default function AILFModel() {
       if(!ld0.p1On&&!ld0.p2On){ld0.p1On=true;ld0.p1Flow=35;ld0.p2On=true;ld0.p2Flow=35}
       // If temp still short, add one more arc pass
       if(ld0.temp<ld0.targetT-6&&!ld0.arcOn&&!ld0.extraArcDone){
-        ld0.arcOn=true; ld0.status='TRIM ARC (auto)'; ld0.arcEndMin=minNow+3; ld0.extraArcDone=true
+        ld0.arcOn=true; ld0.status='TRIM ARC (auto)'; ld0.arcEndMin=minNow+3; ld0.extraArcDone=true; SOUND.startArc('lf1_arc',transMVA*920)
       }
       // If S still high, add probe + wire again
       if(ld0.S>sched.purgeSteps[3]?.minS+0.002&&!ld0.extraWireDone&&!ld0.lanceY){
@@ -476,13 +671,15 @@ export default function AILFModel() {
 
     // Auto-stop arc/purge at scheduled end times
     sim.ladles.forEach(ld=>{
-      if(ld.arcOn&&ld.arcEndMin&&minNow>=ld.arcEndMin){ld.arcOn=false;ld.arcEndMin=null;if(!ld.status?.includes('ALLOY')&&!ld.complete)ld.status='ARC DONE'}
+      if(ld.arcOn&&ld.arcEndMin&&minNow>=ld.arcEndMin){ld.arcOn=false;ld.arcEndMin=null;if(!ld.status?.includes('ALLOY')&&!ld.complete)ld.status='ARC DONE';SOUND.stopArc('lf1_arc')}
       if((ld.p1On||ld.p2On)&&ld.purgeEndMin&&minNow>=ld.purgeEndMin){
         // After purge ends, keep very soft purge (don't turn off completely)
         ld.p1Flow=Math.max(35,Math.round((ld.p1Flow||0)*0.15))
         ld.p2Flow=Math.max(35,Math.round((ld.p2Flow||0)*0.15))
         ld.purgeEndMin=null
         if(!ld.complete)ld.status='HOLDING — SOFT PURGE'
+        SOUND.stopPurge('lf1_p1');SOUND.stopPurge('lf1_p2')
+        SOUND.startPurge('lf1_soft',35)
       }
       if(ld.alloyAddMin&&minNow>ld.alloyAddMin+1.5){ld.alloyAddMin=null;if(ld.status?.startsWith('ALLOY'))ld.status='ALLOY DISSOLVED'}
     })
@@ -557,6 +754,10 @@ export default function AILFModel() {
         ld.complete=true; ld.status='COMPLETE ✓ — READY FOR CAST'
         ld.arcOn=false  // ensure arc off
         ld.p1On=true; ld.p1Flow=35; ld.p2On=true; ld.p2Flow=35  // soft purge hold
+        SOUND.stopArc('lf1_arc')
+        SOUND.stopPurge('lf1_p1');SOUND.stopPurge('lf1_p2')
+        SOUND.startPurge('lf1_soft',35)
+        SOUND.playBurst('complete')
       }
       // Cleanup
       const maxY=LY1_*0.85+LY0_*0.15, LY0v=LY0_
@@ -614,7 +815,8 @@ export default function AILFModel() {
           ))}
           <button onClick={generateSchedule} style={{padding:'5px 14px',borderRadius:4,border:`2px solid ${CV.cyan}`,background:'rgba(57,197,207,0.15)',color:CV.cyan,fontSize:10,fontWeight:700,cursor:'pointer'}}>⚙ COMPUTE PLAN</button>
           {schedule&&!simRun&&<button onClick={()=>{if(simRef.current){simRef.current.t=0;setElapsed(0);stepRef.current=0;setStepIdx(0)};setSimRun(true);setTab('simulation')}} style={{padding:'5px 14px',borderRadius:4,border:`1px solid ${CV.success}`,background:'rgba(87,171,90,0.15)',color:CV.success,fontSize:10,fontWeight:700,cursor:'pointer'}}>▶ RUN SIM</button>}
-          {simRun&&<button onClick={()=>setSimRun(false)} style={{padding:'5px 12px',borderRadius:4,border:`1px solid ${CV.danger}`,background:'rgba(229,83,73,0.15)',color:CV.danger,fontSize:10,fontWeight:700,cursor:'pointer'}}>⏸ PAUSE</button>}
+          <button onClick={()=>{SOUND.enabled=!SOUND.enabled;if(!SOUND.enabled)SOUND.stopAll();setSoundOn(v=>!v)}} style={{padding:'5px 10px',borderRadius:4,border:`1px solid ${soundOn?CV.cyan:CV.border}`,background:soundOn?'rgba(57,197,207,0.15)':'transparent',color:soundOn?CV.cyan:CV.muted,fontSize:10,fontWeight:700,cursor:'pointer'}} title="Toggle sound">{soundOn?'🔊':'🔇'}</button>
+          {simRun&&<button onClick={()=>{setSimRun(false);SOUND.stopAll()}} style={{padding:'5px 12px',borderRadius:4,border:`1px solid ${CV.danger}`,background:'rgba(229,83,73,0.15)',color:CV.danger,fontSize:10,fontWeight:700,cursor:'pointer'}}>⏸ PAUSE</button>}
         </div>
       </div>
 
