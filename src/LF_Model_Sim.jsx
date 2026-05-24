@@ -290,12 +290,45 @@ function LFCanvas({ simRef, W, H, running }) {
       ;[[P1,ld.p1On,ld.p1Flow,'P1'],[P2,ld.p2On,ld.p2Flow,'P2']].forEach(([px,on,flow,nm])=>{
         ctx.fillStyle=on?'rgba(28,58,100,0.88)':'rgba(15,25,40,0.80)';ctx.strokeStyle=on?CV.blue:'#1e3040';ctx.lineWidth=0.8
         ctx.beginPath();ctx.ellipse(px,PY,LW*0.052,CH*0.012,0,0,Math.PI*2);ctx.fill();ctx.stroke()
-        ctx.strokeStyle='#1a2535';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(px,PY+CH*0.010);ctx.lineTo(px,CH*0.94);ctx.stroke()
-        if(on){const fg=ctx.createLinearGradient(0,CH*0.94,0,PY);fg.addColorStop(0,'rgba(41,182,246,0.55)');fg.addColorStop(1,'rgba(41,182,246,0.12)');ctx.strokeStyle=fg;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(px,CH*0.94);ctx.lineTo(px,PY+CH*0.010);ctx.stroke();const eg=ctx.createRadialGradient(px,LY0+CH*0.065,1,px,LY0+CH*0.065,20);eg.addColorStop(0,'rgba(41,182,246,0.40)');eg.addColorStop(1,'rgba(41,182,246,0)');ctx.fillStyle=eg;ctx.beginPath();ctx.arc(px,LY0+CH*0.065,20,0,Math.PI*2);ctx.fill()}
+        // Pipe goes DOWN from plug to bottom of ladle exterior
+        const pipeBot=LY1+CH*0.028
+        ctx.strokeStyle='#1a2535';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(px,PY+4);ctx.lineTo(px,pipeBot);ctx.stroke()
+        if(on){
+          const fg=ctx.createLinearGradient(0,pipeBot,0,PY);fg.addColorStop(0,'rgba(41,182,246,0.65)');fg.addColorStop(1,'rgba(41,182,246,0.15)');
+          ctx.strokeStyle=fg;ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(px,pipeBot);ctx.lineTo(px,PY+4);ctx.stroke()
+          lbB(`${flow}`,px+7,PY+(pipeBot-PY)*0.5,`rgba(41,182,246,0.55)`,cl(CW*0.009,6,7),'left')
+        }
         lb(`${nm}${on?' '+flow:''}`,px,PY+CH*0.027,on?CV.blue:'#1e3040',cl(CW*0.009,6,8))
       })
-      ;(ld.plug1Bubbles||[]).forEach(p=>{ctx.globalAlpha=p.life*0.28;ctx.fillStyle='rgba(150,220,255,0.7)';ctx.beginPath();ctx.arc(p.x,p.y,p.r*2.4,0,Math.PI*2);ctx.fill();ctx.globalAlpha=p.life*0.82;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()});ctx.globalAlpha=1
-      ;(ld.plug2Bubbles||[]).forEach(p=>{ctx.globalAlpha=p.life*0.28;ctx.fillStyle='rgba(150,220,255,0.7)';ctx.beginPath();ctx.arc(p.x,p.y,p.r*2.4,0,Math.PI*2);ctx.fill();ctx.globalAlpha=p.life*0.82;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()});ctx.globalAlpha=1
+      // Draw bubbles clipped to ladle interior so they never appear outside
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(cx-LW/2+LIN, LY0+3, LW-LIN*2, LH-LIN-3)
+      ctx.clip()
+      ;(ld.plug1Bubbles||[]).forEach(p=>{
+        // Outer glow
+        ctx.globalAlpha=p.life*0.22; ctx.fillStyle='rgba(150,220,255,0.7)'
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r*2.2,0,Math.PI*2); ctx.fill()
+        // Core bubble
+        ctx.globalAlpha=p.life*0.80; ctx.fillStyle=p.col
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
+        // Highlight
+        ctx.globalAlpha=p.life*0.35; ctx.fillStyle='rgba(255,255,255,0.9)'
+        ctx.beginPath(); ctx.arc(p.x-p.r*0.3,p.y-p.r*0.3,p.r*0.32,0,Math.PI*2); ctx.fill()
+      }); ctx.globalAlpha=1
+      ;(ld.plug2Bubbles||[]).forEach(p=>{
+        ctx.globalAlpha=p.life*0.22; ctx.fillStyle='rgba(150,220,255,0.7)'
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r*2.2,0,Math.PI*2); ctx.fill()
+        ctx.globalAlpha=p.life*0.80; ctx.fillStyle=p.col
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill()
+        ctx.globalAlpha=p.life*0.35; ctx.fillStyle='rgba(255,255,255,0.9)'
+        ctx.beginPath(); ctx.arc(p.x-p.r*0.3,p.y-p.r*0.3,p.r*0.32,0,Math.PI*2); ctx.fill()
+      }); ctx.globalAlpha=1
+      ctx.restore()
+      // Surface eye glow where bubbles break (outside clip is fine)
+      const slagTopY = LY0+CH*0.038-CH*0.033*(1+(ld.slagFoam||0.12))
+      if(ld.p1On){ const eg=ctx.createRadialGradient(cx-LW*0.28,slagTopY,1,cx-LW*0.28,slagTopY,18);eg.addColorStop(0,'rgba(41,182,246,0.45)');eg.addColorStop(1,'rgba(41,182,246,0)');ctx.fillStyle=eg;ctx.beginPath();ctx.arc(cx-LW*0.28,slagTopY,18,0,Math.PI*2);ctx.fill()}
+      if(ld.p2On){ const eg=ctx.createRadialGradient(cx+LW*0.28,slagTopY,1,cx+LW*0.28,slagTopY,18);eg.addColorStop(0,'rgba(100,215,255,0.45)');eg.addColorStop(1,'rgba(100,215,255,0)');ctx.fillStyle=eg;ctx.beginPath();ctx.arc(cx+LW*0.28,slagTopY,18,0,Math.PI*2);ctx.fill()}
       // Lance
       const LMX=cx+LW*0.44,LMYT=CH*0.10
       ctx.fillStyle='#1e2d3d';ctx.strokeStyle='#2c4055';ctx.lineWidth=1;ctx.fillRect(LMX-CW*0.026,LMYT-CH*0.04,CW*0.052,CH*0.04);ctx.strokeRect(LMX-CW*0.026,LMYT-CH*0.04,CW*0.052,CH*0.04)
@@ -423,11 +456,35 @@ export default function AILFModel() {
       if(step.type==='probe'){ld.probeY=0.01;ld.probeDone=false;ld.probeFrames=0;ld.status='TEMP MEAS.'}
       stepRef.current++; setStepIdx(stepRef.current)
     }
-    // Auto-stop
+
+    // After all scheduled steps done — keep soft purge running until complete
+    const ld0=sim.ladles[0]
+    const allStepsDone = stepRef.current >= sched.timeline.length
+    if(allStepsDone && !ld0.complete){
+      // Ensure soft purge is on
+      if(!ld0.p1On&&!ld0.p2On){ld0.p1On=true;ld0.p1Flow=35;ld0.p2On=true;ld0.p2Flow=35}
+      // If temp still short, add one more arc pass
+      if(ld0.temp<ld0.targetT-6&&!ld0.arcOn&&!ld0.extraArcDone){
+        ld0.arcOn=true; ld0.status='TRIM ARC (auto)'; ld0.arcEndMin=minNow+3; ld0.extraArcDone=true
+      }
+      // If S still high, add probe + wire again
+      if(ld0.S>sched.purgeSteps[3]?.minS+0.002&&!ld0.extraWireDone&&!ld0.lanceY){
+        ld0.lanceY=0.01; ld0.status='EXTRA WIRE (desulph)'; ld0.extraWireDone=true
+      }
+      ld0.status=ld0.status||'FINAL HOLD — PURGING'
+    }
+
+    // Auto-stop arc/purge at scheduled end times
     sim.ladles.forEach(ld=>{
-      if(ld.arcOn&&ld.arcEndMin&&minNow>=ld.arcEndMin){ld.arcOn=false;ld.arcEndMin=null}
-      if((ld.p1On||ld.p2On)&&ld.purgeEndMin&&minNow>=ld.purgeEndMin){ld.p1On=false;ld.p2On=false;ld.purgeEndMin=null}
-      if(ld.alloyAddMin&&minNow>ld.alloyAddMin+1.5){ld.alloyAddMin=null;if(ld.status?.startsWith('ALLOY'))ld.status='ALLOY DONE'}
+      if(ld.arcOn&&ld.arcEndMin&&minNow>=ld.arcEndMin){ld.arcOn=false;ld.arcEndMin=null;if(!ld.status?.includes('ALLOY')&&!ld.complete)ld.status='ARC DONE'}
+      if((ld.p1On||ld.p2On)&&ld.purgeEndMin&&minNow>=ld.purgeEndMin){
+        // After purge ends, keep very soft purge (don't turn off completely)
+        ld.p1Flow=Math.max(35,Math.round((ld.p1Flow||0)*0.15))
+        ld.p2Flow=Math.max(35,Math.round((ld.p2Flow||0)*0.15))
+        ld.purgeEndMin=null
+        if(!ld.complete)ld.status='HOLDING — SOFT PURGE'
+      }
+      if(ld.alloyAddMin&&minNow>ld.alloyAddMin+1.5){ld.alloyAddMin=null;if(ld.status?.startsWith('ALLOY'))ld.status='ALLOY DISSOLVED'}
     })
     // Physics
     const tgt=g
@@ -444,8 +501,8 @@ export default function AILFModel() {
         const tF=0.72+0.010*Math.sin(sim.t*3)
         ld.electrodeY=ld.electrodeY.map((ey,ei)=>{const v=(tF+0.014*Math.sin(sim.t*5+ei*2.1)-ey)*0.04;ld.electrodeVel[ei]=v;ld.arcLen[ei]=Math.round(128+transMVA*5.5+Math.random()*14);return cl(ey+v,0.05,0.88)})
         if(sim.frame%3===0){
-          const cx_=CW*0.22,lw_=CW*0.19
-          ;[0,1,2].forEach(ei=>{if(Math.random()<0.55){const ex=cx_+(ei-1)*lw_*0.22;const rfI=CH*0.46-CH*0.032+CH*0.008;const sS=CH*0.46+CH*0.058;const ef=cl(ld.electrodeY[ei],0,1);const eyB=rfI+(sS-rfI)*ef*0.85;ld.sparks.push({x:ex+(Math.random()-0.5)*22,y:eyB+(sS-eyB)*0.4+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*8,vy:-Math.random()*5-0.5,life:1,r:0.8+Math.random()*2.5,col:Math.random()>0.35?'rgba(255,255,128,0.92)':'rgba(80,160,255,0.88)'})
+          const cx_spark=CW*0.22,lw_spark=CW*0.19
+          ;[0,1,2].forEach(ei=>{if(Math.random()<0.55){const ex=cx_spark+(ei-1)*lw_spark*0.22;const rfI=CH*0.46-CH*0.032+CH*0.008;const sS=CH*0.46+CH*0.058;const ef=cl(ld.electrodeY[ei],0,1);const eyB=rfI+(sS-rfI)*ef*0.85;ld.sparks.push({x:ex+(Math.random()-0.5)*22,y:eyB+(sS-eyB)*0.4+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*8,vy:-Math.random()*5-0.5,life:1,r:0.8+Math.random()*2.5,col:Math.random()>0.35?'rgba(255,255,128,0.92)':'rgba(80,160,255,0.88)'})
           }})
         }
       } else {
@@ -453,21 +510,60 @@ export default function AILFModel() {
         ld.slagFoam=Math.max(0.05,ld.slagFoam-0.001)
       }
       // Bubbles
-      const cx_=ld===sim.ladles[0]?CW*0.22:CW*0.74,lw_=CW*0.19,LY1_=CH*0.46+CH*0.38,LIN_=cl(CW*0.014,10,18)
-      if(ld.p1On&&sim.frame%2===0)ld.plug1Bubbles.push({x:cx_-lw_*0.28+(Math.random()-0.5)*lw_*0.06,y:LY1_-LIN_,vx:(Math.random()-0.5)*1.4,vy:-(1.4+Math.random()*3.5)*(ld.p1Flow/180),life:1,r:3+Math.random()*5,col:`rgba(80,200,255,${0.65+Math.random()*0.28})`})
-      if(ld.p2On&&sim.frame%2===0)ld.plug2Bubbles.push({x:cx_+lw_*0.28+(Math.random()-0.5)*lw_*0.06,y:LY1_-LIN_,vx:(Math.random()-0.5)*1.4,vy:-(1.4+Math.random()*3.5)*(ld.p2Flow/180),life:1,r:3+Math.random()*5,col:`rgba(100,215,255,${0.65+Math.random()*0.28})`})
-      const LY0_=CH*0.46
+      // Bubble spawn at BOTTOM of ladle interior, rise UPWARD (negative vy)
+      const cx_=ld===sim.ladles[0]?CW*0.22:CW*0.74
+      const lw_=CW*0.19
+      const LY0_=CH*0.46       // top of ladle
+      const LY1_=LY0_+CH*0.38  // bottom of ladle
+      const LIN_=cl(CW*0.014,10,18)
+      const BATH_H_=CH*0.38*0.71  // steel bath height
+      const spawnY = LY1_ - LIN_ - 4  // bottom of refractory = plug position
+      if(ld.p1On&&sim.frame%2===0){
+        const speed=cl(ld.p1Flow/180,0.3,2.2)
+        ld.plug1Bubbles.push({
+          x:cx_-lw_*0.28+(Math.random()-0.5)*lw_*0.05,
+          y:spawnY,
+          vx:(Math.random()-0.5)*1.2,
+          vy:-(1.6+Math.random()*3.0)*speed,  // NEGATIVE = rising
+          life:1, r:2.5+Math.random()*4,
+          col:`rgba(80,200,255,${0.60+Math.random()*0.30})`
+        })
+      }
+      if(ld.p2On&&sim.frame%2===0){
+        const speed=cl(ld.p2Flow/180,0.3,2.2)
+        ld.plug2Bubbles.push({
+          x:cx_+lw_*0.28+(Math.random()-0.5)*lw_*0.05,
+          y:spawnY,
+          vx:(Math.random()-0.5)*1.2,
+          vy:-(1.6+Math.random()*3.0)*speed,  // NEGATIVE = rising
+          life:1, r:2.5+Math.random()*4,
+          col:`rgba(100,215,255,${0.60+Math.random()*0.30})`
+        })
+      }
+      // LY0_, LY1_, lw_, cx_ already declared above
       if(ld.status?.startsWith('ALLOY')&&sim.frame%3===0){const hx=cx_+lw_*0.44;ld.alloyParticles.push({x:hx+(Math.random()-0.5)*lw_*0.15,y:LY0_-CH*0.01,vy:4+Math.random()*5,life:1,r:2.5+Math.random()*3,col:Math.random()>0.5?'rgba(200,165,60,0.88)':'rgba(180,145,50,0.78)'})}
       // Lance/probe
       if(ld.lanceY>0){if(ld.lanceY<1){ld.lanceY=Math.min(1,ld.lanceY+0.006)}else{ld.lanceTimer=(ld.lanceTimer||0)+1;if(ld.lanceTimer>90){ld.lanceY=Math.max(0,ld.lanceY-0.012);if(ld.lanceY<=0){ld.lanceY=0;ld.lanceTimer=0;if(ld.status?.startsWith('WIRE'))ld.status='WIRE DONE'}}}}
       if(ld.probeY>0&&!ld.probeDone){ld.probeY=Math.min(0.85,ld.probeY+0.010);if(ld.probeY>=0.80)ld.probeDone=true}
       if(ld.probeDone){ld.probeFrames=(ld.probeFrames||0)+1;if(ld.probeFrames>110){ld.probeY=Math.max(0,ld.probeY-0.018);if(ld.probeY<=0){ld.probeY=0;ld.probeFrames=0;ld.probeDone=false}}}
-      if(ld.temp>=ld.targetT-2&&ld.S<=tgt.S+0.0015&&!ld.complete){ld.complete=true;ld.status='COMPLETE ✓';setSimRun(false)}
+      // Mark complete but keep sim running — user clicks PAUSE when done
+      // Intermediate status messages
+      const tNear = ld.temp >= ld.targetT-15 && ld.temp < ld.targetT-2
+      const sNear = ld.S <= tgt.S*1.5 && ld.S > tgt.S+0.0015
+      if(tNear && !ld.complete && !ld.arcOn && !ld.status?.includes('ALLOY') && !ld.status?.includes('WIRE') && !ld.status?.includes('MEAS'))
+        ld.status = `NEARING TARGET — ${Math.round(ld.temp)}°C`
+      // Completion: temp reached, S in spec, Mn in range
+      if(ld.temp>=ld.targetT-2 && ld.S<=tgt.S+0.0015 && !ld.complete){
+        ld.complete=true; ld.status='COMPLETE ✓ — READY FOR CAST'
+        ld.arcOn=false  // ensure arc off
+        ld.p1On=true; ld.p1Flow=35; ld.p2On=true; ld.p2Flow=35  // soft purge hold
+      }
       // Cleanup
-      const maxY=CH*0.46+CH*0.38*0.85, LY0v=CH*0.46
+      const maxY=LY1_*0.85+LY0_*0.15, LY0v=LY0_
       ld.sparks=(ld.sparks||[]).filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,vy:p.vy+0.24,life:p.life-0.052}))
-      ld.plug1Bubbles=(ld.plug1Bubbles||[]).filter(p=>p.life>0&&p.y>LY0v+20).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.008,r:p.r+0.05}))
-      ld.plug2Bubbles=(ld.plug2Bubbles||[]).filter(p=>p.life>0&&p.y>LY0v+20).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.008,r:p.r+0.05}))
+      // Bubbles rise upward (vy negative) — remove when they reach slag surface (LY0v + small offset)
+      ld.plug1Bubbles=(ld.plug1Bubbles||[]).filter(p=>p.life>0&&p.y>LY0v+CH*0.04).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.010,r:Math.min(p.r+0.04,8)}))
+      ld.plug2Bubbles=(ld.plug2Bubbles||[]).filter(p=>p.life>0&&p.y>LY0v+CH*0.04).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.010,r:Math.min(p.r+0.04,8)}))
       ld.alloyParticles=(ld.alloyParticles||[]).filter(p=>p.life>0&&p.y<maxY).map(p=>({...p,y:p.y+p.vy,life:p.life-0.016}))
     })
     sim._mva=transMVA
