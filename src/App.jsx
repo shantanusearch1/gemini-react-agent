@@ -8,6 +8,7 @@ import CokePlantModel from './Cokeplantmodel.jsx'
 import BOFVisualization from './BOFVisualization.jsx'
 import SinterPlantModel from './SinterPlantModel.jsx'
 import LadleFurnaceModel from './Ladlefurnacemodel.jsx'
+import AILFModel from './LF_Model_Sim.jsx'
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
@@ -95,6 +96,8 @@ const NAV_ITEMS = [
   { id: 'sinter_plant', icon: 'local_fire_department', label: 'Sinter Plant', roles: ['admin','steel'] },
   { id: 'divider_lf', isDivider: true, label: 'Secondary Steelmaking', roles: ['admin','steel'] },
   { id: 'ladle_furnace', icon: 'bolt', label: 'Ladle Furnace', roles: ['admin','steel'] },
+  { id: 'divider_ai', isDivider: true, label: 'AI Models', roles: ['admin','steel'] },
+  { id: 'ai_lf', icon: 'psychology', label: 'AI LF Model', roles: ['admin','steel'] },
 ]
 
 // Material Design colors
@@ -772,6 +775,13 @@ export default function App({ user, onLogout }) {
             <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
               <LadleFurnaceModel />
             </div>
+          )}
+
+          {/* Ladle Furnace Model */}
+          {activeTab === 'ai_lf' && (
+          <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+            <AILFModel />
+          </div>
           )}
                      
           {/* ── HISTORY ── */}
