@@ -9,6 +9,8 @@ import BOFVisualization from './BOFVisualization.jsx'
 import SinterPlantModel from './SinterPlantModel.jsx'
 import LadleFurnaceModel from './Ladlefurnacemodel.jsx'
 import AILFModel from './LF_Model_Sim.jsx'
+import LFModelTune from './LF_Model_Tune.jsx'
+
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
@@ -98,6 +100,7 @@ const NAV_ITEMS = [
   { id: 'ladle_furnace', icon: 'bolt', label: 'Ladle Furnace', roles: ['admin','steel'] },
   { id: 'divider_ai', isDivider: true, label: 'AI Models', roles: ['admin','steel'] },
   { id: 'ai_lf', icon: 'psychology', label: 'AI LF Model', roles: ['admin','steel'] },
+  { id: 'LFModelTune', icon: 'psychology', label: 'LF Model Config', roles: ['admin','steel'] },
 ]
 
 // Material Design colors
@@ -783,7 +786,15 @@ export default function App({ user, onLogout }) {
             <AILFModel />
           </div>
           )}
-                     
+
+         {/* Ladle Model Tune*/}
+          {activeTab === 'LFModelTune' && (
+          <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+            <LFModelTune />
+          </div>
+          )}
+
+          
           {/* ── HISTORY ── */}
           {activeTab === 'history' && (
             <div style={{ maxWidth: 860 }}>
