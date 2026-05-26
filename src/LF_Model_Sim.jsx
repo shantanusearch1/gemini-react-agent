@@ -393,11 +393,11 @@ function LFCanvas({ simRef, W, H, running }) {
     const sim=simRef.current
     if(!sim){ctx.fillStyle=CV.bg;ctx.fillRect(0,0,CW,CH);rafRef.current=requestAnimationFrame(draw);return}
     try{
-    const LFC=[CW*0.22,CW*0.74], LW=CW*0.19, LH=CH*0.30
-    const LY0=CH*0.37, LY1=LY0+LH, RY=LY0-CH*0.028
-    const LIN=cl(CW*0.012,8,16), EW=cl(CW*0.010,7,12), ET=CH*0.055
-    const TX=CW*0.465,TY=CH*0.20,TW=CW*0.07,TH=CH*0.22
-    const slgSY=LY0+CH*0.048, rfIn=RY+CH*0.007
+    const LFC=[CW*0.22,CW*0.74], LW=CW*0.19, LH=CH*0.26
+    const LY0=CH*0.32, LY1=LY0+LH, RY=LY0-CH*0.025
+    const LIN=cl(CW*0.012,8,14), EW=cl(CW*0.009,6,11), ET=CH*0.048
+    const TX=CW*0.465,TY=CH*0.17,TW=CW*0.07,TH=CH*0.20
+    const slgSY=LY0+CH*0.042, rfIn=RY+CH*0.006
     const t=sim.t
     ctx.fillStyle=CV.bg;ctx.fillRect(0,0,CW,CH)
     ctx.strokeStyle='rgba(255,255,255,0.012)';ctx.lineWidth=0.5
@@ -484,7 +484,7 @@ function LFCanvas({ simRef, W, H, running }) {
         ctx.fillStyle=on?'rgba(28,58,100,0.88)':'rgba(15,25,40,0.80)';ctx.strokeStyle=on?CV.blue:'#1e3040';ctx.lineWidth=0.8
         ctx.beginPath();ctx.ellipse(px,PY,LW*0.052,CH*0.012,0,0,Math.PI*2);ctx.fill();ctx.stroke()
         // Pipe goes DOWN from plug to bottom of ladle exterior
-        const pipeBot=LY1+CH*0.018
+        const pipeBot=LY1+CH*0.014
         ctx.strokeStyle='#1a2535';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(px,PY+4);ctx.lineTo(px,pipeBot);ctx.stroke()
         if(on){
           const fg=ctx.createLinearGradient(0,pipeBot,0,PY);fg.addColorStop(0,'rgba(41,182,246,0.65)');fg.addColorStop(1,'rgba(41,182,246,0.15)');
@@ -519,11 +519,11 @@ function LFCanvas({ simRef, W, H, running }) {
       }); ctx.globalAlpha=1
       ctx.restore()
       // Surface eye glow where bubbles break (outside clip is fine)
-      const slagTopY = LY0+CH*0.032-CH*0.028*(1+(ld.slagFoam||0.12))
+      const slagTopY = LY0+CH*0.028-CH*0.024*(1+(ld.slagFoam||0.12))
       if(ld.p1On){ const eg=ctx.createRadialGradient(cx-LW*0.28,slagTopY,1,cx-LW*0.28,slagTopY,18);eg.addColorStop(0,'rgba(41,182,246,0.45)');eg.addColorStop(1,'rgba(41,182,246,0)');ctx.fillStyle=eg;ctx.beginPath();ctx.arc(cx-LW*0.28,slagTopY,18,0,Math.PI*2);ctx.fill()}
       if(ld.p2On){ const eg=ctx.createRadialGradient(cx+LW*0.28,slagTopY,1,cx+LW*0.28,slagTopY,18);eg.addColorStop(0,'rgba(100,215,255,0.45)');eg.addColorStop(1,'rgba(100,215,255,0)');ctx.fillStyle=eg;ctx.beginPath();ctx.arc(cx+LW*0.28,slagTopY,18,0,Math.PI*2);ctx.fill()}
       // Lance
-      const LMX=cx+LW*0.44,LMYT=CH*0.07
+      const LMX=cx+LW*0.44,LMYT=CH*0.060
       ctx.fillStyle='#1e2d3d';ctx.strokeStyle='#2c4055';ctx.lineWidth=1;ctx.fillRect(LMX-CW*0.026,LMYT-CH*0.04,CW*0.052,CH*0.04);ctx.strokeRect(LMX-CW*0.026,LMYT-CH*0.04,CW*0.052,CH*0.04)
       lbB('TL',LMX,LMYT-CH*0.048,CV.success,cl(CW*0.009,7,9))
       if(ld.lanceY>0){
@@ -533,7 +533,7 @@ function LFCanvas({ simRef, W, H, running }) {
         if(ld.lanceY>0.65){const pg=ctx.createRadialGradient(LMX,lTip+4,1,LMX,lTip+4,18);pg.addColorStop(0,'rgba(255,200,80,0.82)');pg.addColorStop(1,'rgba(200,140,40,0)');ctx.fillStyle=pg;ctx.beginPath();ctx.arc(LMX,lTip+4,18,0,Math.PI*2);ctx.fill();lb('CaSi',LMX+lW2/2+5,lTip,'rgba(200,180,80,0.70)',cl(CW*0.009,7,8),'left')}
       }
       // Probe
-      const PMX=cx-LW*0.41,PMYT=CH*0.07
+      const PMX=cx-LW*0.41,PMYT=CH*0.060
       ctx.fillStyle='#1e2d3d';ctx.strokeStyle='#2c4055';ctx.lineWidth=1;ctx.fillRect(PMX-CW*0.022,PMYT-CH*0.04,CW*0.044,CH*0.04);ctx.strokeRect(PMX-CW*0.022,PMYT-CH*0.04,CW*0.044,CH*0.04)
       lbB('PR',PMX,PMYT-CH*0.048,CV.success,cl(CW*0.009,7,9))
       if(ld.probeY>0){
@@ -543,13 +543,13 @@ function LFCanvas({ simRef, W, H, running }) {
         if(ld.probeDone){const pg2=ctx.createRadialGradient(PMX,pTip,1,PMX,pTip,24);pg2.addColorStop(0,`rgba(87,171,90,${0.55+0.35*Math.sin(t*8)})`);pg2.addColorStop(1,'rgba(87,171,90,0)');ctx.fillStyle=pg2;ctx.beginPath();ctx.arc(PMX,pTip,24,0,Math.PI*2);ctx.fill();lbB(`${Math.round(ld.temp)}°C`,PMX,pTip-30,CV.success,cl(CW*0.012,10,13));lb('SAMPLE ✓',PMX,pTip-16,CV.success,cl(CW*0.009,7,9))}
       }
       // Alloy hopper
-      const AHX=cx+LW*0.44,AHY=CH*0.06
+      const AHX=cx+LW*0.44,AHY=CH*0.050
       ctx.fillStyle='#1e2535';ctx.strokeStyle='#2c4055';ctx.lineWidth=0.8;ctx.beginPath();ctx.moveTo(AHX-CW*0.03,AHY);ctx.lineTo(AHX+CW*0.03,AHY);ctx.lineTo(AHX+CW*0.025,AHY+CH*0.065);ctx.lineTo(AHX-CW*0.025,AHY+CH*0.065);ctx.closePath();ctx.fill();ctx.stroke()
       ctx.fillStyle='rgba(190,155,60,0.65)';ctx.fillRect(AHX-CW*0.025+4,AHY+6,CW*0.05-8,CH*0.05)
       lbB('FA',AHX,AHY-4,CV.yellow,cl(CW*0.009,7,9))
       ;(ld.alloyParticles||[]).forEach(p=>{ctx.globalAlpha=p.life*0.85;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();ctx.globalAlpha=p.life*0.25;ctx.fillStyle='rgba(255,225,100,0.8)';ctx.beginPath();ctx.arc(p.x,p.y,p.r*2.2,0,Math.PI*2);ctx.fill()});ctx.globalAlpha=1
       // Data box
-      const dbX=cx-LW*0.55,dbY=LY1+CH*0.010,dbW=LW*1.10,dbH=CH*0.108
+      const dbX=cx-LW*0.55,dbY=LY1+CH*0.008,dbW=LW*1.10,dbH=CH*0.100
       ctx.fillStyle='rgba(4,8,18,0.92)';ctx.fillRect(dbX,dbY,dbW,dbH);ctx.strokeStyle=ld.arcOn?CV.accent:ld.p1On||ld.p2On?CV.blue:'#1e3040';ctx.lineWidth=0.8;ctx.strokeRect(dbX,dbY,dbW,dbH)
       lbB(`LF${idx+1}`,dbX+8,dbY+12,CV.accent,cl(CW*0.010,8,11),'left');lbB(ld.status||'',dbX+dbW-8,dbY+12,ld.complete?CV.success:ld.arcOn?CV.accent:ld.p1On||ld.p2On?CV.blue:CV.muted,cl(CW*0.009,7,9),'right')
       const tf=cl((ld.temp-1540)/(ld.targetT-1540),0,1);ctx.fillStyle='#0a1520';ctx.fillRect(dbX+5,dbY+dbH-16,dbW-10,10);ctx.fillStyle=tf>0.95?CV.success:tf>0.65?CV.accent:CV.blue;ctx.fillRect(dbX+5,dbY+dbH-16,(dbW-10)*tf,10);ctx.strokeStyle='#1a3050';ctx.lineWidth=0.3;ctx.strokeRect(dbX+5,dbY+dbH-16,dbW-10,10)
@@ -557,7 +557,7 @@ function LFCanvas({ simRef, W, H, running }) {
         const ry=dbY+22+ri*CH*0.026;ctx.fillStyle='rgba(175,198,215,0.88)';ctx.font=`${cl(CW*0.010,8,10)}px monospace`;ctx.textAlign='left';ctx.fillText(r[0],dbX+6,ry)
         if(r[1]){ctx.fillStyle='rgba(95,135,158,0.65)';ctx.textAlign='right';ctx.fillText(r[1],dbX+dbW-6,ry)}
       })
-      lbB(`LADLE FURNACE ${idx+1}`,cx,LY0-CH*0.038,CV.muted,cl(CW*0.010,7,11))
+      lbB(`LADLE FURNACE ${idx+1}`,cx,LY0-CH*0.032,CV.muted,cl(CW*0.010,7,11))
     })
     ctx.fillStyle='rgba(4,8,18,0.80)';ctx.fillRect(0,0,CW,CH*0.028)
     lbB('TWIN LF — AI SCHEDULE CONTROLLED',CW/2,CH*0.019,CV.cyan,cl(CW*0.010,8,12))
@@ -699,7 +699,7 @@ export default function AILFModel() {
         ld.electrodeY=ld.electrodeY.map((ey,ei)=>{const v=(tF+0.014*Math.sin(sim.t*5+ei*2.1)-ey)*0.04;ld.electrodeVel[ei]=v;ld.arcLen[ei]=Math.round(128+transMVA*5.5+Math.random()*14);return cl(ey+v,0.05,0.88)})
         if(sim.frame%3===0){
           const cx_spark=CW*0.22,lw_spark=CW*0.19
-          ;[0,1,2].forEach(ei=>{if(Math.random()<0.55){const ex=cx_spark+(ei-1)*lw_spark*0.22;const rfI=CH*0.37-CH*0.028+CH*0.007;const sS=CH*0.37+CH*0.048;const ef=cl(ld.electrodeY[ei],0,1);const eyB=rfI+(sS-rfI)*ef*0.85;ld.sparks.push({x:ex+(Math.random()-0.5)*22,y:eyB+(sS-eyB)*0.4+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*8,vy:-Math.random()*5-0.5,life:1,r:0.8+Math.random()*2.5,col:Math.random()>0.35?'rgba(255,255,128,0.92)':'rgba(80,160,255,0.88)'})
+          ;[0,1,2].forEach(ei=>{if(Math.random()<0.55){const ex=cx_spark+(ei-1)*lw_spark*0.22;const rfI=CH*0.32-CH*0.025+CH*0.006;const sS=CH*0.32+CH*0.042;const ef=cl(ld.electrodeY[ei],0,1);const eyB=rfI+(sS-rfI)*ef*0.85;ld.sparks.push({x:ex+(Math.random()-0.5)*22,y:eyB+(sS-eyB)*0.4+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*8,vy:-Math.random()*5-0.5,life:1,r:0.8+Math.random()*2.5,col:Math.random()>0.35?'rgba(255,255,128,0.92)':'rgba(80,160,255,0.88)'})
           }})
         }
       } else {
@@ -710,8 +710,8 @@ export default function AILFModel() {
       // Bubble spawn at BOTTOM of ladle interior, rise UPWARD (negative vy)
       const cx_=ld===sim.ladles[0]?CW*0.22:CW*0.74
       const lw_=CW*0.19
-      const LY0_=CH*0.37       // top of ladle (shifted up)
-      const LY1_=LY0_+CH*0.30  // bottom of ladle (compressed)
+      const LY0_=CH*0.32       // top of ladle
+      const LY1_=LY0_+CH*0.26  // bottom of ladle
       const LIN_=cl(CW*0.014,10,18)
       const BATH_H_=CH*0.38*0.71  // steel bath height
       const spawnY = LY1_ - LIN_ - 4  // bottom of refractory = plug position
@@ -763,8 +763,8 @@ export default function AILFModel() {
       const maxY=LY1_*0.85+LY0_*0.15, LY0v=LY0_
       ld.sparks=(ld.sparks||[]).filter(p=>p.life>0).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,vy:p.vy+0.24,life:p.life-0.052}))
       // Bubbles rise upward (vy negative) — remove when they reach slag surface (LY0v + small offset)
-      ld.plug1Bubbles=(ld.plug1Bubbles||[]).filter(p=>p.life>0&&p.y>LY0v+CH*0.032).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.010,r:Math.min(p.r+0.04,8)}))
-      ld.plug2Bubbles=(ld.plug2Bubbles||[]).filter(p=>p.life>0&&p.y>LY0v+CH*0.032).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.010,r:Math.min(p.r+0.04,8)}))
+      ld.plug1Bubbles=(ld.plug1Bubbles||[]).filter(p=>p.life>0&&p.y>LY0v+CH*0.028).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.010,r:Math.min(p.r+0.04,8)}))
+      ld.plug2Bubbles=(ld.plug2Bubbles||[]).filter(p=>p.life>0&&p.y>LY0v+CH*0.028).map(p=>({...p,x:p.x+p.vx,y:p.y+p.vy,life:p.life-0.010,r:Math.min(p.r+0.04,8)}))
       ld.alloyParticles=(ld.alloyParticles||[]).filter(p=>p.life>0&&p.y<LY1_+20).map(p=>({...p,y:p.y+p.vy,life:p.life-0.016}))
     })
     sim._mva=transMVA
