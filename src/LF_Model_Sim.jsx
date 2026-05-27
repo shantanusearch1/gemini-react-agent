@@ -561,7 +561,45 @@ function LFCanvas({ simRef, W, H, running }) {
     })
     ctx.fillStyle='rgba(4,8,18,0.80)';ctx.fillRect(0,0,CW,CH*0.024)
     lbB('TWIN LF — AI SCHEDULE CONTROLLED',CW/2,CH*0.016,CV.cyan,cl(CW*0.009,7,11))
-    ctx.fillStyle='rgba(4,8,18,0.92)';ctx.fillRect(0,CH-16,CW,16)
+    // ── TIMELINE BAR inside canvas ─────────────────────────────────────
+    if(sim._schedule){
+      const TLY=CH*0.62, TLH=CH*0.16
+      ctx.fillStyle='rgba(4,8,18,0.88)'; ctx.fillRect(0,TLY,CW,TLH)
+      ctx.strokeStyle=CV.border||'#1a2d45'; ctx.lineWidth=0.8
+      ctx.beginPath(); ctx.moveTo(0,TLY); ctx.lineTo(CW,TLY); ctx.stroke()
+      const steps=sim._schedule.timeline||[]
+      const stepW=Math.min(CW/(steps.length||1), CW*0.12)
+      const startX=(CW-stepW*steps.length)/2
+      steps.forEach((s,i)=>{
+        const sx=startX+i*stepW+stepW/2
+        const sy=TLY+TLH*0.25
+        const done=i<(sim._stepIdx||0), active=i===(sim._stepIdx||0)
+        const dotCol=done?'#57ab5a':active?'#FF8F00':'#1a2535'
+        const txtCol=done?'#57ab5a':active?'#FF8F00':'#6e8098'
+        // Connector line
+        if(i>0){
+          ctx.strokeStyle=done?'rgba(87,171,90,0.4)':'rgba(26,45,69,0.6)'; ctx.lineWidth=1.5
+          ctx.beginPath(); ctx.moveTo(startX+(i-1)*stepW+stepW/2,sy); ctx.lineTo(sx,sy); ctx.stroke()
+        }
+        // Dot
+        ctx.fillStyle=dotCol
+        ctx.beginPath(); ctx.arc(sx,sy,active?7:5,0,Math.PI*2); ctx.fill()
+        if(active){ctx.strokeStyle='#FF8F00';ctx.lineWidth=1.5;ctx.stroke()}
+        // Label
+        const lab=(s.label||'').split(':').pop().trim()
+        ctx.fillStyle=txtCol; ctx.font=`${active?'bold ':''} ${cl(CW*0.008,6,9)}px monospace`; ctx.textAlign='center'
+        ctx.fillText(lab.length>12?lab.slice(0,11)+'…':lab, sx, TLY+TLH*0.55)
+        ctx.fillStyle='#37474F'; ctx.font=`${cl(CW*0.007,5,8)}px monospace`
+        ctx.fillText(`${s.tMin}m`, sx, TLY+TLH*0.75)
+      })
+      // Progress bar
+      const pct=steps.length>0?(sim._stepIdx||0)/steps.length:0
+      ctx.fillStyle='#0a1520'; ctx.fillRect(16,TLY+TLH*0.84,CW-32,6)
+      ctx.fillStyle='#57ab5a'; ctx.fillRect(16,TLY+TLH*0.84,(CW-32)*pct,6)
+      ctx.strokeStyle='#1a3050'; ctx.lineWidth=0.4; ctx.strokeRect(16,TLY+TLH*0.84,CW-32,6)
+    }
+    // Footer
+    ctx.fillStyle='rgba(4,8,18,0.92)'; ctx.fillRect(0,CH-16,CW,16)
     ctx.fillStyle='#2c4055';ctx.font=`${cl(CW*0.009,7,9)}px monospace`;ctx.textAlign='left'
     ctx.fillText(`TWIN LF  |  LF1: ${Math.round(sim.ladles[0]?.temp||0)}°C  [S]:${sim.ladles[0]?.S.toFixed(4)||'--'}%  |  ${new Date().toLocaleTimeString()}`,8,CH-4)
     }catch(e){console.error('LFCanvas:',e)}
@@ -768,6 +806,8 @@ export default function AILFModel() {
       ld.alloyParticles=(ld.alloyParticles||[]).filter(p=>p.life>0&&p.y<LY1_+20).map(p=>({...p,y:p.y+p.vy,life:p.life-0.016}))
     })
     sim._mva=transMVA
+    sim._schedule=schedRef.current
+    sim._stepIdx=stepRef.current
     setSimState({...sim,ladles:sim.ladles.map(l=>({...l,sparks:[...l.sparks],plug1Bubbles:[...l.plug1Bubbles],plug2Bubbles:[...l.plug2Bubbles],alloyParticles:[...l.alloyParticles],electrodeY:[...l.electrodeY],arcLen:[...l.arcLen]}))})
   },[transMVA,heatWt,g,CW,CH])
 
@@ -1010,18 +1050,7 @@ export default function AILFModel() {
           {/* SIMULATION tab */}
           {tab==='simulation'&&simState&&<LFCanvas simRef={simRef} W={CW} H={CH} running={simRun}/>}
 
-          {/* Sim timeline overlay */}
-          {tab==='simulation'&&schedule&&(
-            <div style={{position:'absolute',bottom:10,left:'50%',transform:'translateX(-50%)',background:'rgba(4,8,18,0.90)',border:`1px solid ${CV.border}`,borderRadius:8,padding:'8px 14px',display:'flex',gap:12,alignItems:'center',maxWidth:'90%',overflowX:'auto'}}>
-              {schedule.timeline.map((s,i)=>(
-                <div key={i} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2,flexShrink:0}}>
-                  <div style={{width:10,height:10,borderRadius:'50%',background:i<stepIdx?CV.success:i===stepIdx?CV.accent:'#1a2535',border:i===stepIdx?`2px solid ${CV.accent}`:undefined,boxShadow:i===stepIdx?`0 0 6px ${CV.accent}`:undefined}}/>
-                  <div style={{fontSize:7,color:i===stepIdx?CV.accent:i<stepIdx?CV.success:CV.muted,maxWidth:60,textAlign:'center',lineHeight:1.2}}>{s.label.split(':').pop().trim()}</div>
-                  <div style={{fontSize:7,color:'#37474F'}}>{s.tMin}m</div>
-                </div>
-              ))}
-            </div>
-          )}
+{/* Timeline drawn inside canvas — no JSX overlay needed */}
 
           {/* Input splash */}
           {tab==='input'&&!simState&&(
