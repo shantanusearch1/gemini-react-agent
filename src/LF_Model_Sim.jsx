@@ -563,40 +563,86 @@ function LFCanvas({ simRef, W, H, running }) {
     lbB('TWIN LF — AI SCHEDULE CONTROLLED',CW/2,CH*0.016,CV.cyan,cl(CW*0.009,7,11))
     // ── TIMELINE BAR inside canvas ─────────────────────────────────────
     if(sim._schedule){
-      const TLY=CH*0.63, TLH=CH*0.20
-      ctx.fillStyle='rgba(4,8,18,0.88)'; ctx.fillRect(0,TLY,CW,TLH)
-      ctx.strokeStyle=CV.border||'#1a2d45'; ctx.lineWidth=0.8
-      ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(0,TLY); ctx.lineTo(CW,TLY); ctx.stroke()
+      const TLY=CH*0.63, TLH=CH*0.22
+      // Background
+      ctx.fillStyle='rgba(4,8,18,0.92)'; ctx.fillRect(0,TLY,CW,TLH)
+      ctx.strokeStyle='#1a2d45'; ctx.lineWidth=1.5
+      ctx.beginPath(); ctx.moveTo(0,TLY); ctx.lineTo(CW,TLY); ctx.stroke()
+
       const steps=sim._schedule.timeline||[]
-      const stepW=Math.min(CW/(steps.length||1), CW*0.12)
-      const startX=(CW-stepW*steps.length)/2
-      steps.forEach((s,i)=>{
-        const sx=startX+i*stepW+stepW/2
-        const sy=TLY+TLH*0.28
-        const done=i<(sim._stepIdx||0), active=i===(sim._stepIdx||0)
-        const dotCol=done?'#57ab5a':active?'#FF8F00':'#1a2535'
-        const txtCol=done?'#57ab5a':active?'#FF8F00':'#6e8098'
-        // Connector line
-        if(i>0){
-          ctx.strokeStyle=done?'rgba(87,171,90,0.4)':'rgba(26,45,69,0.6)'; ctx.lineWidth=1.5
-          ctx.beginPath(); ctx.moveTo(startX+(i-1)*stepW+stepW/2,sy); ctx.lineTo(sx,sy); ctx.stroke()
-        }
-        // Dot
-        ctx.fillStyle=dotCol
-        ctx.beginPath(); ctx.arc(sx,sy,active?10:7,0,Math.PI*2); ctx.fill()
-        if(active){ctx.strokeStyle='#FF8F00';ctx.lineWidth=2.5;ctx.stroke()}
-        // Label
-        const lab=(s.label||'').split(':').pop().trim()
-        ctx.fillStyle=txtCol; ctx.font=`${active?'bold ':''} ${cl(CW*0.011,9,13)}px monospace`; ctx.textAlign='center'
-        ctx.fillText(lab.length>14?lab.slice(0,13)+'…':lab, sx, TLY+TLH*0.58)
-        ctx.fillStyle='#546E7A'; ctx.font=`bold ${cl(CW*0.009,7,10)}px monospace`
-        ctx.fillText(`${s.tMin}m`, sx, TLY+TLH*0.80)
-      })
-      // Progress bar
-      const pct=steps.length>0?(sim._stepIdx||0)/steps.length:0
-      ctx.fillStyle='#0a1520'; ctx.fillRect(16,TLY+TLH*0.88,CW-32,8)
-      ctx.fillStyle='#57ab5a'; ctx.fillRect(16,TLY+TLH*0.88,(CW-32)*pct,8)
-      ctx.strokeStyle='#1a3050'; ctx.lineWidth=0.5; ctx.strokeRect(16,TLY+TLH*0.88,CW-32,8)
+      if(steps.length>0){
+        const stepW=CW/steps.length
+        const dotY=TLY+TLH*0.30   // dot row
+        const namY=TLY+TLH*0.58   // step name row
+        const timY=TLY+TLH*0.80   // time row
+        const namSz=cl(CW*0.012,10,14)
+        const timSz=cl(CW*0.010,8,11)
+
+        steps.forEach((s,i)=>{
+          const sx=stepW*i+stepW/2
+          const done=i<(sim._stepIdx||0)
+          const active=i===(sim._stepIdx||0)
+          const dotCol=done?'#57ab5a':active?'#FF8F00':'#263340'
+          const dotR=active?11:done?8:6
+
+          // Connector line between dots
+          if(i>0){
+            ctx.strokeStyle=done?'rgba(87,171,90,0.45)':'rgba(30,50,70,0.7)'
+            ctx.lineWidth=done?2:1.5
+            ctx.beginPath()
+            ctx.moveTo(stepW*(i-1)+stepW/2, dotY)
+            ctx.lineTo(sx, dotY)
+            ctx.stroke()
+          }
+
+          // Dot
+          ctx.fillStyle=dotCol
+          ctx.beginPath(); ctx.arc(sx,dotY,dotR,0,Math.PI*2); ctx.fill()
+          if(active){
+            ctx.strokeStyle='#FF8F00'; ctx.lineWidth=2.5
+            ctx.beginPath(); ctx.arc(sx,dotY,dotR+3,0,Math.PI*2); ctx.stroke()
+            // Pulse ring
+            const pulse=0.5+0.5*Math.sin(sim.t*6)
+            ctx.strokeStyle=`rgba(255,143,0,${pulse*0.4})`; ctx.lineWidth=1.5
+            ctx.beginPath(); ctx.arc(sx,dotY,dotR+7,0,Math.PI*2); ctx.stroke()
+          }
+          if(done){
+            // Checkmark dot
+            ctx.fillStyle='rgba(255,255,255,0.8)'; ctx.font=`bold ${cl(CW*0.009,7,10)}px monospace`
+            ctx.textAlign='center'; ctx.fillText('✓',sx,dotY+3.5)
+          }
+
+          // Step name — LINE 1 (bold, colored)
+          const raw=(s.label||'').split(':').pop().trim()
+          // Split into 2 words max per line
+          const words=raw.split(' ')
+          const half=Math.ceil(words.length/2)
+          const line1=words.slice(0,half).join(' ')
+          const line2=words.slice(half).join(' ')
+          const txtCol=active?'#FF8F00':done?'#57ab5a':'#78909C'
+          ctx.fillStyle=txtCol
+          ctx.font=`${active?'bold ':''}${namSz}px monospace`
+          ctx.textAlign='center'
+          ctx.fillText(line1, sx, namY-(line2?namSz*0.5:0))
+          if(line2) ctx.fillText(line2, sx, namY+(namSz*0.55))
+
+          // Time — LINE 2 (subtle)
+          ctx.fillStyle=active?'rgba(255,143,0,0.65)':done?'rgba(87,171,90,0.55)':'#37474F'
+          ctx.font=`${timSz}px monospace`
+          ctx.fillText(`${s.tMin}m`, sx, timY)
+        })
+
+        // Progress bar
+        const pct=Math.min(1,(sim._stepIdx||0)/steps.length)
+        const pbY=TLY+TLH*0.91, pbH=7
+        ctx.fillStyle='#0d1828'; ctx.fillRect(12,pbY,CW-24,pbH)
+        const pbGrd=ctx.createLinearGradient(12,0,CW-24,0)
+        pbGrd.addColorStop(0,'#29B6F6'); pbGrd.addColorStop(0.5,'#57ab5a'); pbGrd.addColorStop(1,'#FF8F00')
+        ctx.fillStyle=pbGrd; ctx.fillRect(12,pbY,(CW-24)*pct,pbH)
+        ctx.strokeStyle='#1a3050'; ctx.lineWidth=0.5; ctx.strokeRect(12,pbY,CW-24,pbH)
+        // Progress label
+        lbB(`${Math.round(pct*100)}% complete  ·  step ${sim._stepIdx||0}/${steps.length}`,CW/2,pbY+pbH+12,'#37474F',cl(CW*0.009,7,10))
+      }
     }
     // Footer
     ctx.fillStyle='rgba(4,8,18,0.92)'; ctx.fillRect(0,CH-16,CW,16)
