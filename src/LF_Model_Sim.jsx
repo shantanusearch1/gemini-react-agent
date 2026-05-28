@@ -549,13 +549,13 @@ function LFCanvas({ simRef, W, H, running }) {
       lbB('FA',AHX,AHY-4,CV.yellow,cl(CW*0.009,7,9))
       ;(ld.alloyParticles||[]).forEach(p=>{ctx.globalAlpha=p.life*0.85;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();ctx.globalAlpha=p.life*0.25;ctx.fillStyle='rgba(255,225,100,0.8)';ctx.beginPath();ctx.arc(p.x,p.y,p.r*2.2,0,Math.PI*2);ctx.fill()});ctx.globalAlpha=1
       // Data box
-      const dbX=cx-LW*0.55,dbY=LY1+CH*0.007,dbW=LW*1.10,dbH=CH*0.090
+      const dbX=cx-LW*0.70,dbY=LY1+CH*0.007,dbW=LW*1.40,dbH=CH*0.100
       ctx.fillStyle='rgba(4,8,18,0.92)';ctx.fillRect(dbX,dbY,dbW,dbH);ctx.strokeStyle=ld.arcOn?CV.accent:ld.p1On||ld.p2On?CV.blue:'#1e3040';ctx.lineWidth=0.8;ctx.strokeRect(dbX,dbY,dbW,dbH)
-      lbB(`LF${idx+1}`,dbX+8,dbY+12,CV.accent,cl(CW*0.010,8,11),'left');lbB(ld.status||'',dbX+dbW-8,dbY+12,ld.complete?CV.success:ld.arcOn?CV.accent:ld.p1On||ld.p2On?CV.blue:CV.muted,cl(CW*0.009,7,9),'right')
+      lbB(`LF${idx+1}`,dbX+10,dbY+14,CV.accent,cl(CW*0.013,11,15),'left');lbB(ld.status||'',dbX+dbW-8,dbY+12,ld.complete?CV.success:ld.arcOn?CV.accent:ld.p1On||ld.p2On?CV.blue:CV.muted,cl(CW*0.009,7,9),'right')
       const tf=cl((ld.temp-1540)/(ld.targetT-1540),0,1);ctx.fillStyle='#0a1520';ctx.fillRect(dbX+5,dbY+dbH-16,dbW-10,10);ctx.fillStyle=tf>0.95?CV.success:tf>0.65?CV.accent:CV.blue;ctx.fillRect(dbX+5,dbY+dbH-16,(dbW-10)*tf,10);ctx.strokeStyle='#1a3050';ctx.lineWidth=0.3;ctx.strokeRect(dbX+5,dbY+dbH-16,dbW-10,10)
       ;[[`T: ${Math.round(ld.temp)}°C`,`→ ${ld.targetT}°C`],[`[C]:${ld.C.toFixed(3)}%  [S]:${ld.S.toFixed(4)}%`,''],[`[Mn]:${ld.Mn.toFixed(3)}%  [Al]:${ld.Al.toFixed(3)}%`,'']].forEach((r,ri)=>{
-        const ry=dbY+18+ri*CH*0.022;ctx.fillStyle='rgba(175,198,215,0.88)';ctx.font=`${cl(CW*0.010,8,10)}px monospace`;ctx.textAlign='left';ctx.fillText(r[0],dbX+6,ry)
-        if(r[1]){ctx.fillStyle='rgba(95,135,158,0.65)';ctx.textAlign='right';ctx.fillText(r[1],dbX+dbW-6,ry)}
+        const ry=dbY+22+ri*CH*0.026;ctx.fillStyle='rgba(200,218,230,0.95)';ctx.font=`bold ${cl(CW*0.012,10,13)}px monospace`;ctx.textAlign='left';ctx.fillText(r[0],dbX+10,ry)
+        if(r[1]){ctx.fillStyle='rgba(120,160,185,0.80)';ctx.font=`${cl(CW*0.011,9,12)}px monospace`;ctx.textAlign='right';ctx.fillText(r[1],dbX+dbW-10,ry)}
       })
       lbB(`LADLE FURNACE ${idx+1}`,cx,LY0-CH*0.028,CV.muted,cl(CW*0.009,6,10))
     })
@@ -909,8 +909,8 @@ export default function AILFModel() {
       <div style={{flex:1,overflow:'hidden',display:'flex'}}>
         {/* Left input panel */}
         <div style={{width:260,background:CV.panel,borderRight:`1px solid ${CV.border}`,overflow:'auto',flexShrink:0,padding:12}}>
-          <div style={{fontSize:9,color:CV.muted,marginBottom:5,letterSpacing:'0.1em'}}>STEEL GRADE</div>
-          <select value={grade} onChange={e=>applyGrade(e.target.value)} style={{width:'100%',padding:'6px 8px',borderRadius:5,border:`1px solid ${CV.accent}66`,background:'#0d1520',color:CV.accent,fontSize:10,fontWeight:700,fontFamily:'monospace',marginBottom:12}}>
+          <div style={{fontSize:11,color:CV.muted,marginBottom:5,letterSpacing:'0.08em'}}>STEEL GRADE</div>
+          <select value={grade} onChange={e=>applyGrade(e.target.value)} style={{width:'100%',padding:'7px 10px',borderRadius:5,border:`1px solid ${CV.accent}66`,background:'#0d1520',color:CV.accent,fontSize:13,fontWeight:700,fontFamily:'monospace',marginBottom:12}}>
             {Object.keys(GRADES).map(g=><option key={g}>{g}</option>)}
           </select>
 
@@ -920,12 +920,12 @@ export default function AILFModel() {
             ['⚙ LF CONFIG',CV.cyan,[[transMVA,setMVA,'MVA','MVA',10,80,1],[slagB,setSlagB,'Slag B2','B2',1.5,6,0.1],[voltStp,setVoltStp,'V Step','',1,15,1]]],
           ].map(([title,col,rows])=>(
             <div key={title} style={{background:CV.bg,border:`1px solid ${col}33`,borderRadius:6,padding:10,marginBottom:10}}>
-              <div style={{fontSize:8,color:col,fontWeight:700,letterSpacing:'0.1em',marginBottom:8}}>{title}</div>
+              <div style={{fontSize:10,color:col,fontWeight:700,letterSpacing:'0.08em',marginBottom:8}}>{title}</div>
               {rows.map(([val,set,label,unit,min,max,step])=>(
                 <div key={label} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:5}}>
-                  <span style={{fontSize:9,color:CV.muted}}>{label}</span>
+                  <span style={{fontSize:11,color:CV.muted}}>{label}</span>
                   <div style={{display:'flex',alignItems:'center',gap:3}}>
-                    <input type="number" value={val} min={min} max={max} step={step} onChange={e=>set(+e.target.value)} style={{width:60,padding:'2px 5px',borderRadius:3,border:`1px solid ${CV.border}`,background:'#0d1520',color:col,fontSize:10,fontFamily:'monospace',fontWeight:700,textAlign:'right'}}/>
+                    <input type="number" value={val} min={min} max={max} step={step} onChange={e=>set(+e.target.value)} style={{width:68,padding:'3px 6px',borderRadius:3,border:`1px solid ${CV.border}`,background:'#0d1520',color:col,fontSize:12,fontFamily:'monospace',fontWeight:700,textAlign:'right'}}/>
                     <span style={{fontSize:8,color:CV.muted,width:24}}>{unit}</span>
                   </div>
                 </div>
@@ -935,7 +935,7 @@ export default function AILFModel() {
 
           <div style={{marginBottom:10}}>
             <div style={{fontSize:9,color:CV.muted,marginBottom:4}}>CASTING ROUTE</div>
-            <select value={castR} onChange={e=>setCastR(e.target.value)} style={{width:'100%',padding:'5px 7px',borderRadius:4,border:`1px solid ${CV.border}`,background:'#0d1520',color:CV.cyan,fontSize:9}}>
+            <select value={castR} onChange={e=>setCastR(e.target.value)} style={{width:'100%',padding:'6px 8px',borderRadius:4,border:`1px solid ${CV.border}`,background:'#0d1520',color:CV.cyan,fontSize:11}}>
               {['6-strand billet','4-strand billet','2-strand bloom','Slab caster'].map(r=><option key={r}>{r}</option>)}
             </select>
           </div>
@@ -945,8 +945,8 @@ export default function AILFModel() {
             <div style={{fontSize:8,color:CV.success,fontWeight:700,letterSpacing:'0.1em',marginBottom:8}}>🎯 TARGETS (from grade)</div>
             {[['T',g.targetT+'°C'],['SH',g.SH+'°C'],['[C]',g.C+'%'],['[Mn]',g.Mn+'%'],['[Si]',g.Si+'%'],['[S]',g.S+'%'],['[Al]',g.Al+'%']].map(([k,v])=>(
               <div key={k} style={{display:'flex',justifyContent:'space-between',padding:'2px 0',borderBottom:`1px solid ${CV.border}`}}>
-                <span style={{fontSize:9,color:CV.muted}}>{k}</span>
-                <span style={{fontSize:9,fontWeight:700,color:CV.success,fontFamily:'monospace'}}>{v}</span>
+                <span style={{fontSize:11,color:CV.muted}}>{k}</span>
+                <span style={{fontSize:11,fontWeight:700,color:CV.success,fontFamily:'monospace'}}>{v}</span>
               </div>
             ))}
           </div>
@@ -957,8 +957,8 @@ export default function AILFModel() {
               <div style={{fontSize:8,color:CV.cyan,fontWeight:700,marginBottom:8}}>⚗ LIVE CHEMISTRY</div>
               {[['[C]',simState.ladles[0].C.toFixed(3),g.C,CV.blue],['[Mn]',simState.ladles[0].Mn.toFixed(3),g.Mn,CV.yellow],['[S]',simState.ladles[0].S.toFixed(4),g.S,CV.danger],['[Al]',simState.ladles[0].Al.toFixed(3),g.Al,'#90A4AE']].map(([el,val,tgt,c])=>(
                 <div key={el} style={{display:'flex',justifyContent:'space-between',padding:'3px 0',borderBottom:`1px solid ${CV.border}`}}>
-                  <span style={{fontSize:9,color:CV.muted}}>{el}</span>
-                  <div><span style={{fontSize:10,color:c,fontWeight:700}}>{val}%</span><span style={{fontSize:8,color:'#37474F',marginLeft:4}}>/{tgt}%</span></div>
+                  <span style={{fontSize:11,color:CV.muted}}>{el}</span>
+                  <div><span style={{fontSize:12,color:c,fontWeight:700}}>{val}%</span><span style={{fontSize:10,color:'#37474F',marginLeft:4}}>/{tgt}%</span></div>
                 </div>
               ))}
             </div>
