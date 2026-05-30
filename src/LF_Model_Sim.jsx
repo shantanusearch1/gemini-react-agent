@@ -971,7 +971,7 @@ export default function AILFModel() {
           {/* PLAN tab */}
           {tab==='plan'&&schedule&&(
             <div style={{padding:16,overflow:'auto',height:'100%'}}>
-              <div style={{fontSize:13,fontWeight:700,color:CV.cyan,marginBottom:14}}>📋 LF Treatment Plan — {grade}</div>
+              <div style={{fontSize:16,fontWeight:700,color:CV.cyan,marginBottom:16}}>📋 LF Treatment Plan — {grade}</div>
               {/* Summary row */}
               <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:8,marginBottom:16}}>
                 <Col c="LF OUT TEMP" v={`${schedule.lfOutTemp}°C`} cc={CV.accent}/>
@@ -983,35 +983,35 @@ export default function AILFModel() {
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
                 {/* Arc */}
                 <div style={{background:'#0a1218',border:`1px solid ${CV.accent}33`,borderRadius:8,padding:12}}>
-                  <div style={{fontSize:10,fontWeight:700,color:CV.accent,marginBottom:8}}>⚡ ARC SCHEDULE</div>
+                  <div style={{fontSize:13,fontWeight:700,color:CV.accent,marginBottom:10}}>⚡ ARC SCHEDULE</div>
                   <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr',gap:4,marginBottom:4}}>
-                    {['Stage','kW','min','kWh'].map(h=><div key={h} style={{fontSize:8,color:CV.muted,fontWeight:700}}>{h}</div>)}
+                    {['Stage','kW','min','kWh'].map(h=><div key={h} style={{fontSize:11,color:CV.muted,fontWeight:700}}>{h}</div>)}
                   </div>
                   {schedule.arcSteps.map((s,i)=>(
                     <div key={i} style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr',gap:4,padding:'4px 0',borderBottom:`1px solid ${CV.border}`}}>
-                      <div style={{fontSize:10,color:CV.text}}>{s.name}</div>
-                      <div style={{fontSize:10,color:CV.accent,fontFamily:'monospace'}}>{s.kw}</div>
-                      <div style={{fontSize:10,color:CV.yellow,fontFamily:'monospace'}}>{s.min}</div>
-                      <div style={{fontSize:10,color:CV.purple,fontFamily:'monospace'}}>{s.kwh}</div>
+                      <div style={{fontSize:12,color:CV.text}}>{s.name}</div>
+                      <div style={{fontSize:12,color:CV.accent,fontFamily:'monospace'}}>{s.kw}</div>
+                      <div style={{fontSize:12,color:CV.yellow,fontFamily:'monospace'}}>{s.min}</div>
+                      <div style={{fontSize:12,color:CV.purple,fontFamily:'monospace'}}>{s.kwh}</div>
                     </div>
                   ))}
                   <div style={{marginTop:6,display:'flex',justifyContent:'space-between'}}>
-                    <span style={{fontSize:9,color:CV.muted}}>Total arc time</span>
-                    <span style={{fontSize:10,color:CV.accent,fontWeight:700}}>{schedule.arcSteps.reduce((a,s)=>a+s.min,0)} min</span>
+                    <span style={{fontSize:11,color:CV.muted}}>Total arc time</span>
+                    <span style={{fontSize:13,color:CV.accent,fontWeight:700}}>{schedule.arcSteps.reduce((a,s)=>a+s.min,0)} min</span>
                   </div>
                 </div>
                 {/* Purge */}
                 <div style={{background:'#0a1218',border:`1px solid ${CV.blue}33`,borderRadius:8,padding:12}}>
-                  <div style={{fontSize:10,fontWeight:700,color:CV.blue,marginBottom:8}}>💨 PURGE SCHEDULE</div>
+                  <div style={{fontSize:13,fontWeight:700,color:CV.blue,marginBottom:10}}>💨 PURGE SCHEDULE</div>
                   <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr',gap:4,marginBottom:4}}>
-                    {['Stage','P1','P2','min'].map(h=><div key={h} style={{fontSize:8,color:CV.muted,fontWeight:700}}>{h}</div>)}
+                    {['Stage','P1','P2','min'].map(h=><div key={h} style={{fontSize:11,color:CV.muted,fontWeight:700}}>{h}</div>)}
                   </div>
                   {schedule.purgeSteps.map((s,i)=>(
                     <div key={i} style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr',gap:4,padding:'4px 0',borderBottom:`1px solid ${CV.border}`}}>
-                      <div style={{fontSize:10,color:CV.text}}>{s.name}</div>
-                      <div style={{fontSize:10,color:CV.blue,fontFamily:'monospace'}}>{s.p1}</div>
-                      <div style={{fontSize:10,color:CV.cyan,fontFamily:'monospace'}}>{s.p2}</div>
-                      <div style={{fontSize:10,color:CV.yellow,fontFamily:'monospace'}}>{s.min}</div>
+                      <div style={{fontSize:12,color:CV.text}}>{s.name}</div>
+                      <div style={{fontSize:12,color:CV.blue,fontFamily:'monospace'}}>{s.p1}</div>
+                      <div style={{fontSize:12,color:CV.cyan,fontFamily:'monospace'}}>{s.p2}</div>
+                      <div style={{fontSize:12,color:CV.yellow,fontFamily:'monospace'}}>{s.min}</div>
                     </div>
                   ))}
                 </div>
@@ -1019,39 +1019,39 @@ export default function AILFModel() {
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
                 {/* Alloys */}
                 <div style={{background:'#0a1218',border:`1px solid ${CV.yellow}33`,borderRadius:8,padding:12}}>
-                  <div style={{fontSize:10,fontWeight:700,color:CV.yellow,marginBottom:8}}>🧪 ALLOY ADDITIONS</div>
+                  <div style={{fontSize:13,fontWeight:700,color:CV.yellow,marginBottom:10}}>🧪 ALLOY ADDITIONS</div>
                   <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 2fr',gap:4,marginBottom:4}}>
-                    {['Alloy','kg','Rec','Timing'].map(h=><div key={h} style={{fontSize:8,color:CV.muted,fontWeight:700}}>{h}</div>)}
+                    {['Alloy','kg','Rec','Timing'].map(h=><div key={h} style={{fontSize:11,color:CV.muted,fontWeight:700}}>{h}</div>)}
                   </div>
                   {schedule.alloys.map((a,i)=>(
                     <div key={i} style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 2fr',gap:4,padding:'4px 0',borderBottom:`1px solid ${CV.border}`}}>
-                      <div style={{fontSize:10,color:CV.text}}>{a.name}</div>
-                      <div style={{fontSize:10,color:CV.yellow,fontFamily:'monospace'}}>{a.kg}</div>
-                      <div style={{fontSize:10,color:CV.muted,fontFamily:'monospace'}}>{a.rec}</div>
-                      <div style={{fontSize:9,color:CV.muted}}>{a.timing}</div>
+                      <div style={{fontSize:12,color:CV.text}}>{a.name}</div>
+                      <div style={{fontSize:12,color:CV.yellow,fontFamily:'monospace'}}>{a.kg}</div>
+                      <div style={{fontSize:12,color:CV.muted,fontFamily:'monospace'}}>{a.rec}</div>
+                      <div style={{fontSize:11,color:CV.muted}}>{a.timing}</div>
                     </div>
                   ))}
                 </div>
                 {/* Wire + Temp */}
                 <div style={{display:'flex',flexDirection:'column',gap:12}}>
                   <div style={{background:'#0a1218',border:`1px solid ${CV.purple}33`,borderRadius:8,padding:12}}>
-                    <div style={{fontSize:10,fontWeight:700,color:CV.purple,marginBottom:8}}>🔩 WIRE INJECTION</div>
+                    <div style={{fontSize:13,fontWeight:700,color:CV.purple,marginBottom:10}}>🔩 WIRE INJECTION</div>
                     {schedule.wires.length>0?schedule.wires.map((w,i)=>(
                       <div key={i} style={{padding:'5px 0',borderBottom:`1px solid ${CV.border}`}}>
                         <div style={{display:'flex',justifyContent:'space-between'}}>
-                          <span style={{fontSize:10,color:CV.text}}>{w.type}</span>
-                          <span style={{fontSize:11,color:CV.purple,fontWeight:700,fontFamily:'monospace'}}>{w.meters}m</span>
+                          <span style={{fontSize:13,color:CV.text}}>{w.type}</span>
+                          <span style={{fontSize:15,color:CV.purple,fontWeight:700,fontFamily:'monospace'}}>{w.meters}m</span>
                         </div>
-                        <div style={{fontSize:9,color:CV.muted}}>{w.purpose}</div>
+                        <div style={{fontSize:11,color:CV.muted}}>{w.purpose}</div>
                       </div>
-                    )):<div style={{fontSize:10,color:CV.muted}}>No wire injection needed</div>}
+                    )):<div style={{fontSize:12,color:CV.muted}}>No wire injection needed</div>}
                   </div>
                   <div style={{background:'#0a1218',border:`1px solid ${CV.success}33`,borderRadius:8,padding:12}}>
-                    <div style={{fontSize:10,fontWeight:700,color:CV.success,marginBottom:8}}>🌡 TEMP TRAJECTORY</div>
+                    <div style={{fontSize:13,fontWeight:700,color:CV.success,marginBottom:10}}>🌡 TEMP TRAJECTORY</div>
                     {schedule.tempPath.map((p,i)=>(
                       <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'3px 0',borderBottom:`1px solid ${CV.border}`}}>
-                        <span style={{fontSize:9,color:CV.muted}}>{p.stage}</span>
-                        <span style={{fontSize:10,color:heatColor(p.t,1500,1720),fontFamily:'monospace',fontWeight:700}}>{p.t}°C</span>
+                        <span style={{fontSize:11,color:CV.muted}}>{p.stage}</span>
+                        <span style={{fontSize:13,color:heatColor(p.t,1500,1720),fontFamily:'monospace',fontWeight:700}}>{p.t}°C</span>
                       </div>
                     ))}
                   </div>
@@ -1060,11 +1060,11 @@ export default function AILFModel() {
               {/* Risks */}
               {schedule.risks.length>0&&(
                 <div style={{background:'#0a1218',border:`1px solid ${CV.danger}33`,borderRadius:8,padding:12,marginBottom:12}}>
-                  <div style={{fontSize:10,fontWeight:700,color:CV.danger,marginBottom:8}}>⚠ RISK FLAGS</div>
+                  <div style={{fontSize:13,fontWeight:700,color:CV.danger,marginBottom:10}}>⚠ RISK FLAGS</div>
                   {schedule.risks.map((r,i)=>(
                     <div key={i} style={{display:'flex',gap:8,padding:'4px 0',borderBottom:`1px solid ${CV.border}`}}>
-                      <span style={{fontSize:9,fontWeight:700,color:r.lvl==='HIGH'?CV.danger:r.lvl==='MEDIUM'?CV.accent:CV.yellow,minWidth:50}}>{r.lvl}</span>
-                      <span style={{fontSize:9,color:CV.text}}>{r.msg}</span>
+                      <span style={{fontSize:11,fontWeight:700,color:r.lvl==='HIGH'?CV.danger:r.lvl==='MEDIUM'?CV.accent:CV.yellow,minWidth:60}}>{r.lvl}</span>
+                      <span style={{fontSize:11,color:CV.text}}>{r.msg}</span>
                     </div>
                   ))}
                 </div>
@@ -1086,7 +1086,7 @@ export default function AILFModel() {
                 </div>
               </div>
               <div style={{marginTop:14,display:'flex',justifyContent:'center'}}>
-                <button onClick={()=>{if(simRef.current){simRef.current.t=0;setElapsed(0);stepRef.current=0;setStepIdx(0)};setSimRun(true);setTab('simulation')}} style={{padding:'10px 28px',borderRadius:7,border:`2px solid ${CV.success}`,background:'rgba(87,171,90,0.15)',color:CV.success,fontSize:12,fontWeight:700,cursor:'pointer'}}>
+                <button onClick={()=>{if(simRef.current){simRef.current.t=0;setElapsed(0);stepRef.current=0;setStepIdx(0)};setSimRun(true);setTab('simulation')}} style={{padding:'12px 36px',borderRadius:7,border:`2px solid ${CV.success}`,background:'rgba(87,171,90,0.15)',color:CV.success,fontSize:15,fontWeight:700,cursor:'pointer'}}>
                   ▶ RUN LF SIMULATION FROM THIS PLAN
                 </button>
               </div>
