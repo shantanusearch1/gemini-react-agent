@@ -11,7 +11,7 @@ import LadleFurnaceModel from './Ladlefurnacemodel.jsx'
 import AILFModel from './LF_Model_Sim.jsx'
 import LFModelTune from './LF_Model_Tune.jsx'
 import DSModel from './DS_Model_SIM.jsx'
-
+import torpedoSimUrl from './Torpedo_SIM.html?url'
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
@@ -776,18 +776,18 @@ export default function App({ user, onLogout }) {
               <SinterPlantModel />
             </div>
           )}
-
-          {/* Torpedo SIM */}
+                    
+          // Then in tab render:
           {activeTab === 'torpedo_sim' && (
             <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
               <iframe
-                src="/src/Torpedo_SIM.html"
+                src={torpedoSimUrl}
                 style={{ width: '100%', height: '100%', border: 'none' }}
                 title="Torpedo SIM"
               />
             </div>
           )}
-
+          
           {/* DS Station */}
           {activeTab === 'ds_station' && (
             <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
