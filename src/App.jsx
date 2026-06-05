@@ -99,10 +99,12 @@ const NAV_ITEMS = [
   { id: 'sinter_plant', icon: 'local_fire_department', label: 'Sinter Plant', roles: ['admin','steel'] },
   { id: 'divider_lf', isDivider: true, label: 'Secondary Steelmaking', roles: ['admin','steel'] },
   { id: 'ladle_furnace', icon: 'bolt', label: 'Ladle Furnace', roles: ['admin','steel'] },
-  { id: 'divider_ai', isDivider: true, label: 'AI Models', roles: ['admin','steel'] },
+  { id: 'divider_ai', isDivider: true, label: 'AI Models', roles: ['admin','steel'] },  
+  { id: 'torpedo_sim', icon: 'local_shipping', label: 'Torpedo SIM', roles: ['admin','steel'] },
+  { id: 'ds_station', icon: 'science', label: 'DS Station', roles: ['admin','steel'] },
   { id: 'ai_lf', icon: 'psychology', label: 'AI LF Model', roles: ['admin','steel'] },
   { id: 'LFModelTune', icon: 'psychology', label: 'LF Model Config', roles: ['admin','steel'] },
-  { id: 'ds_station', icon: 'science', label: 'DS Station', roles: ['admin','steel'] },
+  
 ]
 
 // Material Design colors
@@ -775,6 +777,24 @@ export default function App({ user, onLogout }) {
             </div>
           )}
 
+          {/* Torpedo SIM */}
+          {activeTab === 'torpedo_sim' && (
+            <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+              <iframe
+                src="/src/Torpedo_SIM.html"
+                style={{ width: '100%', height: '100%', border: 'none' }}
+                title="Torpedo SIM"
+              />
+            </div>
+          )}
+
+          {/* DS Station */}
+          {activeTab === 'ds_station' && (
+            <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+              <DSModel />
+            </div>
+          )}
+
           {/* Ladle Furnace Model */}
           {activeTab === 'ladle_furnace' && (
             <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
@@ -795,14 +815,7 @@ export default function App({ user, onLogout }) {
             <LFModelTune />
           </div>
           )}
-
-          {/* DS Station */}
-          {activeTab === 'ds_station' && (
-            <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
-              <DSModel />
-            </div>
-          )}
-
+          
           
           {/* ── HISTORY ── */}
           {activeTab === 'history' && (
