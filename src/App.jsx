@@ -10,6 +10,7 @@ import SinterPlantModel from './SinterPlantModel.jsx'
 import LadleFurnaceModel from './Ladlefurnacemodel.jsx'
 import AILFModel from './LF_Model_Sim.jsx'
 import LFModelTune from './LF_Model_Tune.jsx'
+import DSModel from './DS_Model_SIM.jsx'
 
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
@@ -101,6 +102,7 @@ const NAV_ITEMS = [
   { id: 'divider_ai', isDivider: true, label: 'AI Models', roles: ['admin','steel'] },
   { id: 'ai_lf', icon: 'psychology', label: 'AI LF Model', roles: ['admin','steel'] },
   { id: 'LFModelTune', icon: 'psychology', label: 'LF Model Config', roles: ['admin','steel'] },
+  { id: 'ds_station', icon: 'science', label: 'DS Station', roles: ['admin','steel'] },
 ]
 
 // Material Design colors
@@ -792,6 +794,13 @@ export default function App({ user, onLogout }) {
           <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
             <LFModelTune />
           </div>
+          )}
+
+          {/* DS Station */}
+          {activeTab === 'ds_station' && (
+            <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+              <DSModel />
+            </div>
           )}
 
           
