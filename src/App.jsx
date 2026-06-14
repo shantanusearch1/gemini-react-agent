@@ -12,7 +12,7 @@ import AILFModel from './LF_Model_Sim.jsx'
 import LFModelTune from './LF_Model_Tune.jsx'
 import DSModel from './DS_Model_SIM.jsx'
 import torpedoSimUrl from './Torpedo_SIM.html?url'
-import BilletCasterAI from './BilletCasterAI.jsx'
+import BilletCasterAI from './Billetcasterai.jsx'
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
