@@ -12,6 +12,7 @@ import AILFModel from './LF_Model_Sim.jsx'
 import LFModelTune from './LF_Model_Tune.jsx'
 import DSModel from './DS_Model_SIM.jsx'
 import torpedoSimUrl from './Torpedo_SIM.html?url'
+import BilletCasterAI from './BilletCasterAI.jsx'
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
@@ -104,6 +105,7 @@ const NAV_ITEMS = [
   { id: 'ds_station', icon: 'science', label: 'DS Station', roles: ['admin','steel'] },
   { id: 'ai_lf', icon: 'psychology', label: 'AI LF Model', roles: ['admin','steel'] },
   { id: 'LFModelTune', icon: 'psychology', label: 'LF Model Config', roles: ['admin','steel'] },
+  { id: 'billet_caster_ai', icon: 'smart_toy', label: 'Billet Caster AI', roles: ['admin','steel'] },
   
 ]
 
@@ -814,6 +816,13 @@ export default function App({ user, onLogout }) {
           <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
             <LFModelTune />
           </div>
+          )}
+
+          {/* Billet Caster AI */}
+          {activeTab === 'billet_caster_ai' && (
+            <div style={{ margin: -24, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+              <BilletCasterAI />
+            </div>
           )}
           
           
